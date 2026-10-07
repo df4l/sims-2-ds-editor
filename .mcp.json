@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "melonds": {
+      "command": "wsl.exe",
+      "args": ["-d", "Ubuntu", "-e", "bash", "-c",
+               "cd ~/MelonMCP && .venv/bin/python -m melonds_mcp"]
+    }
+  }
+}

@@ -1,0 +1,27 @@
+# Game data: copyrighted, never committed. Each user unpacks their own ROM (see README).
+/rom/
+/rom_bin/
+*.nds
+*.sav
+*.dsv
+
+# Generated: modified ROMs, editor project, caches, emulator dumps
+/build/
+
+# Third-party binary (download it, see README)
+/ndstool.exe
+/ndstool
+
+# Ghidra project (holds the disassembled game code)
+*.gpr
+*.rep/
+*.lock
+*.lock~
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local Claude Code settings
+.claude/settings.local.json

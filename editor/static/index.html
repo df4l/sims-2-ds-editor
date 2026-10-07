@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sims 2 DS Editor</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<header>
+  <strong>Sims 2 DS Editor</strong>
+  <label>Location <select id="loc"></select></label>
+  <label>Variant <select id="block"></select></label>
+  <label>Text <select id="lang"></select></label>
+  <span class="sep"></span>
+  <button id="tab2d" class="tab on">Top-down</button>
+  <button id="tab3d" class="tab">3D</button>
+  <span class="sep"></span>
+  <label><input type="checkbox" id="showBsp" checked> Collision</label>
+  <label><input type="checkbox" id="showScene" checked> Scene</label>
+  <label><input type="checkbox" id="showModels" checked> Item models</label>
+  <label><input type="checkbox" id="showLabels"> Labels</label>
+  <span class="sep"></span>
+  <button id="modeCells" class="tab" title="Click collision cells instead of items (top-down view)">Edit collision</button>
+  <button id="undo" title="Ctrl+Z">Undo</button>
+  <button id="revert" title="Drop every edit of this location's layout and collision">Revert location</button>
+  <button id="build" title="Write build/editor_rom/sims2_edited.nds">Build ROM</button>
+  <span id="edited"></span>
+  <span id="status"></span>
+</header>
+<main>
+  <section id="views">
+    <canvas id="view2d"></canvas>
+    <div id="view3d" hidden></div>
+    <div id="legend"></div>
+  </section>
+  <aside>
+    <details open><summary>Items</summary><div id="items"></div></details>
+    <details open><summary>Selection</summary><div id="details"><p class="muted">Click an item.</p></div></details>
+    <details open><summary>Scripts</summary><div id="scripts"></div></details>
+  </aside>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+# Sims 2 DS map editor (phase 5)
+
+Python backend reusing `tools/` + browser UI. Same on Windows and Linux.
+
+```
+.venv/Scripts/python -m pip install -r requirements.txt           # Linux: .venv/bin/python (first-time setup: ../README.md)
+.venv/Scripts/python editor/server.py                             # opens http://127.0.0.1:8765
+```
+
+- `server.py`: stdlib HTTP server, JSON API (see its docstring).
+- `project.py`: edit layer (see below). `python editor/project.py status|build|reset`.
+- `backend.py`: calls `layout`, `bsp`, `layscript`, `nitro`, `s2data` and `locations` from `tools/`. It holds no format logic of its own.
+- `static/`: `index.html`, `app.js` (sidebar + top-down canvas), `view3d.js` (three.js).
+- `static/vendor/three/`: three.js r170, vendored with its MIT licence so the editor works offline.
+- Generated caches go in `build/editor_cache/`: GLB per BMD0 entry and brush JSON per BSP. Delete the folder to regenerate it.
+- Models are converted by `tools/nitro.py` `bmd0_to_glb`. It uses nitrogen for the geometry and textures but fixes the texture coordinates: V axis, NNS Maya texture SRT, and repeat/mirror from the material. It hooks a nitrogen internal (`_read_material`), so keep nitrogen pinned.
+
+The URL hash keeps the view: `#loc=5&block=1&item=0/0/3&view=3d`. The item key is block/group/item, 0-based.
+
+## Milestone 1 (read-only) — done 2026-10-06
+Shows any of the 33 locations:
+- collision from the BSP;
+- layout items of block 0 plus a chosen variant block;
+- entry points;
+- the scene models and item models in 3D;
+- item details, door destinations with a link to open them;
+- the scripts, with dialogue text in 6 languages.
+
+Assumed, not verified:
+- the facing direction (sign of the angle);
+- trigger/door boxes drawn centred on the item position, not rotated.
+
+## Milestone 2 (editing) — done 2026-10-07
+- **Items**: select, then drag in the top-down view or use the form (x, y, z, angle, raw record of the same size and type). Duplicate appends a copy at the end of the group. Delete (button or Del key):
+  - a referenced item is refused (the message names the scripts);
+  - references and waypoint links to the items after it are renumbered.
+- **Entry points**: move and set the angle.
+- **Collision**: "Edit collision", then click a cell. Clicking the same spot again picks the next cell below. Actions: delete the cell, move it by (dx, dy, dz), or add an axis-aligned box.
+- **Undo** (Ctrl+Z), **Revert location**, **Build ROM**:
+  - edits are saved at once in `build/editor_project/`;
+  - the ROM is written to `build/editor_rom/sims2_edited.nds`;
+  - `/rom/` and `rom_bin/` are never written.
+- A layout shared by two locations (22 and 23) is flagged in the panel.
+- Checked in the emulator: an added item, a deleted cell and an added box all behave as edited (journal 2026-10-07).
+- The undo stack lives in the server process. `project.py reset` while the server runs does not clear it.
+
+## Hotel room furniture — 2026-10-07
+- Locations 8, 29, 17, 15, 18, 20 list their **default furniture** (pink, group "Room furniture"): fridge, bed, couch,
+  shower, toilet, sink. It is not in the layout: it comes from the arm9 table 0x0211FA70 (docs/formats/roomfurn.md).
+- Positions are computed like the game does (room grid file + model box + placement data); checked 36/36 against the emulator.
+- Edit: drag (snaps to grid cells; wall props slide along their wall) or the form (prop id, rot, cell / wall slot).
+  Saved in `build/editor_project/furniture/`, written into `arm9.bin` at Build ROM.
+- **Only new games** see the change: the table is copied into the game state (and the save) at new game.
+- The prop list offers the 182 furniture props (floor or wall, decoded from arm9 + their node files, exact placement).
+  Other prop ids are refused: the game has no placement object for them.
