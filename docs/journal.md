@@ -729,3 +729,24 @@ text or bg_composite.
   id, and every position is exact.
 - **Side observation**: the warp (mode 5) re-runs the default copy, so a RAM edit of [G]+0x41F8 is lost on the next warp.
   It does not tell whether a real save keeps the list (not investigated: the user does not need save editing).
+
+## 2026-10-07 — Published as a git repository
+
+- Repository: `git@github.com:df4l/sims-2-ds-editor.git`. `.gitignore` keeps out all game data (`rom/`, `rom_bin/`,
+  `*.nds`), `build/`, the Ghidra project (it holds the disassembled code), `.venv/` and `ndstool.exe`.
+- New `tools/setup_rom.py`:
+  - unpacks the user's own `.nds` into `rom/` with ndstool;
+  - BLZ-decompresses `arm9.bin` (ndspy);
+  - drops the 12-byte footer that `ndstool -x` keeps after arm9;
+  - checks SHA-1 of `arm9.bin` (module params field `compressed_static_end` zeroed) and `rom.bin`;
+  - runs `rombin.py extract`.
+- `rebuild_rom.ndstool()` finds `ndstool.exe` or `ndstool` on the PATH (Linux). Requirements are merged into the root
+  `requirements.txt`.
+- **Test**:
+  - built a ROM with a BLZ-compressed arm9 (ndspy compress + `ndstool -c`), like a cartridge dump;
+  - cloned the repository into `build/setup_test/clone` and ran `setup_rom.py` on it;
+  - result: arm9 decompressed, both hashes match, 8866 entries extracted. In the clone, the 7 tests pass, the editor
+    API serves locations and GLB models, and `project.py build` writes a ROM.
+  - `test_layout.py` needs `rom_bin/catalog.csv`, so setup now also runs `tools/catalog.py`.
+- **Found during the test**: `ndstool -x` writes the arm9 footer `21 06 C0 DE …` (12 bytes) at the end of `arm9.bin`. The
+  project's `rom/arm9.bin` never had it. Without stripping it, the hash differs, although the code is identical.

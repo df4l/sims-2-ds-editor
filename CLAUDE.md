@@ -114,6 +114,8 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 2 done)
+- Git repository (2026-10-07): github df4l/sims-2-ds-editor, no game data committed; a new clone is set up with
+  `tools/setup_rom.py <game.nds>` (README.md).
 - Latest progress (2026-10-07): placement data (wall flag + offsets) decoded for all 182 furniture props (jump table +
   node files, docs/formats/roomfurn.md §4), 36 more props checked in the emulator; editor prop picker. Before: hotel room furniture. Not in the layouts: arm9 default table 0x0211FA70 → game state at new
   game → spawned on room entry on a per-room grid file (docs/formats/roomfurn.md, tools/roomfurn.py). Placement reproduced

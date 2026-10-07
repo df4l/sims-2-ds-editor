@@ -3,10 +3,10 @@
 Usage: python tools/setup_rom.py path/to/sims2.nds
 
 1. ndstool -x the ROM into rom/ (arm9.bin, arm7.bin, overlays, data/, header, banner).
-2. BLZ-decompress arm9.bin if needed (ndspy). The tools read arm9 data tables at fixed addresses.
+2. BLZ-decompress arm9.bin if needed (ndspy) and drop the 12-byte footer ndstool keeps after it. The tools read arm9 data tables at fixed addresses.
 3. Check arm9.bin and data/rom.bin against the version this project was made on: ASJP (Europe), ROM version 0x00.
    Another version is unpacked anyway but the addresses in tools/ and docs/ will be wrong for it.
-4. Extract rom.bin into rom_bin/ (tools/rombin.py extract).
+4. Extract rom.bin into rom_bin/ (tools/rombin.py extract), then classify it (tools/catalog.py -> catalog.csv).
 """
 import argparse
 import hashlib
@@ -66,9 +66,12 @@ def main() -> None:
     subprocess.run([ndstool(), '-x', str(a.nds.resolve()), '-9', 'arm9.bin', '-7', 'arm7.bin', '-y9', 'y9.bin',
                     '-y7', 'y7.bin', '-d', 'data', '-y', 'overlay', '-t', 'banner.bin', '-h', 'header.bin'],
                    cwd=rom, check=True, capture_output=True)
-    print(f'unpacked {a.nds} into rom/')
+    print(f'unpacked {a.nds} into rom/', flush=True)
     if decompress_arm9(rom / 'arm9.bin'):
-        print('arm9.bin: decompressed')
+        print('arm9.bin: decompressed', flush=True)
+    a9 = (rom / 'arm9.bin').read_bytes()
+    if a9[-12:-8] == NITROCODE[:4]:     # ndstool -x keeps the 12-byte footer after arm9 (not needed to rebuild)
+        (rom / 'arm9.bin').write_bytes(a9[:-12])
     code = (rom / 'header.bin').read_bytes()[0xC:0x10].decode('ascii', 'replace')
     ok = True
     for name, want in (('arm9.bin', ARM9_SHA1), ('data/rom.bin', ROMBIN_SHA1)):
@@ -78,10 +81,12 @@ def main() -> None:
             ok = False
             print(f'WARNING {name}: sha1 {got}, expected {want}')
     print(f'game code {code}: ' + ('same version as the project (ASJP v0x00)' if ok else
-          'NOT the version this project was made on, addresses in tools/ will not match'))
+          'NOT the version this project was made on, addresses in tools/ will not match'), flush=True)
     if not a.skip_extract:
-        print('extracting rom.bin into rom_bin/ ...')
+        print('extracting rom.bin into rom_bin/ ...', flush=True)
         subprocess.run([sys.executable, str(ROOT / 'tools' / 'rombin.py'), 'extract'], check=True)
+        print('classifying entries into rom_bin/catalog.csv ...', flush=True)
+        subprocess.run([sys.executable, str(ROOT / 'tools' / 'catalog.py')], check=True)
 
 
 if __name__ == '__main__':
