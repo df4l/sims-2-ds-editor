@@ -5,7 +5,7 @@ export const COLORS = {
   1: '#4fc3f7', 2: '#ffb74d', 3: '#e57373', 4: '#81c784', 5: '#ba68c8', 7: '#90a4ae',
   8: '#fff176', 9: '#a1887f', 10: '#ffcc80', 11: '#4db6ac', entry: '#ffd54f', furniture: '#f06292',
 };
-const NAMES = { 1: 'npc', 2: 'prop', 3: 'trigger box', 4: 'door / object box', 5: 'zone5', 7: 'box', 8: 'unk8',
+const NAMES = { 1: 'npc', 2: 'prop', 3: 'trigger box', 4: 'door / object box', 5: 'light?', 7: 'box', 8: 'event watcher',
   9: 'waypoint', 10: 'timed prop', 11: 'sound', entry: 'entry point', furniture: 'room furniture (default)' };
 
 const $ = (id) => document.getElementById(id);
@@ -116,15 +116,54 @@ function renderFurniture(it) {
   $('ffapply').addEventListener('click', () => edit('furniture', { i: it.index, prop: v('ffp'), rot: v('ffr'), x: v('ffx'), z: v('ffz') }));
 }
 
+// ---- typed fields (tools/layout.py FIELDS, served by /api/palette): one widget per field, ids picked from lists --
+const opt = (v, text, cur) => `<option value="${v}"${v === cur ? ' selected' : ''}>${esc(text)}</option>`;
+function fieldInput(t, f, v, pre) {
+  const P = S.palette, id = `${pre}_${f.name}`;
+  const sel = (opts) => `<select id="${id}" data-f="${f.name}">${opts}</select>`;
+  if (f.name === 'npc') return sel(P.npcs.map((n) => opt(n.id, `${n.id} ${n.name} (${n.model})`, v)).join(''));
+  if (f.name === 'prop') return sel(P.props.filter((p) => p.id >= f.min && p.id <= f.max).map((p) => opt(p.id, `${p.id} ${p.name}`, v)).join(''));
+  if (f.name === 'object') return sel(P.objects.map((o) => opt(o.id, `${o.id} ${o.name}`, v)).join(''));
+  if (f.name === 'dest') return sel(S.locs.map((l) => opt(l.id, `${l.id} ${l.place}${l.nav == null ? ' (no layout)' : ''}`, v)).join(''));
+  if (f.name === 'entry') return sel(entryOptions(null, v));
+  return `<input id="${id}" data-f="${f.name}" type="number" step="1" min="${f.min}" max="${f.max}" value="${v}">`;
+}
+// entry point ids of the door destination (a location may list one id twice: location 2 has two entries 0)
+function entryOptions(dest, cur) {
+  const ids = [...new Set(S.palette.entry_ids[dest] ?? [])];
+  if (cur != null && !ids.includes(cur)) ids.push(cur);
+  return ids.map((e) => opt(e, `entry ${e}${(S.palette.entry_ids[dest] ?? []).includes(e) ? '' : ' (missing!)'}`, cur)).join('');
+}
+function fieldsForm(t, vals, pre) {
+  const T = S.palette.types.find((x) => x.type === t);
+  if (!T) return '';
+  return `<div class="form fields" id="${pre}">` + T.fields.map((f) =>
+    `<span title="${f.min}..${f.max}">${f.name.replace('_', ' ')}</span>${fieldInput(t, f, vals[f.name], pre)}`).join('') + '</div>';
+}
+// wire the destination -> entry list after the form is in the DOM
+function bindFields(pre, vals) {
+  const d = $(`${pre}_dest`), e = $(`${pre}_entry`);
+  if (!d || !e) return;
+  const fill = (cur) => { e.innerHTML = entryOptions(+d.value, cur); };
+  fill(vals.entry);
+  d.addEventListener('change', () => fill(null));
+}
+function readFields(pre) {
+  const out = {};
+  document.querySelectorAll(`#${pre} [data-f]`).forEach((el) => { if (el.value !== '') out[el.dataset.f] = +el.value; });
+  return out;
+}
+
 // edit form of the selected item / entry point (angles in degrees; entry points store radians * 4096)
 function editForm(it) {
   const ent = it.type === 'entry';
-  const ang = ent ? (it.angle_rad * 180 / Math.PI).toFixed(1) : it.angle_deg;
   const num = (id, v) => `<input id="${id}" type="number" step="1" value="${v}">`;
   let h = `<div class="form"><span>x, y, z</span>${num('fx', it.x)}${num('fy', it.y)}${num('fz', it.z)}`;
-  if (ang != null) h += `<span>angle °</span>${num('fa', ang)}<span></span><span></span>`;
-  if (!ent) h += `<span>raw</span><input id="fraw" class="raw" value="${it.raw}" spellcheck="false">`;
-  h += '</div><div class="btns"><button id="fapply">Apply</button>';
+  if (ent) h += `<span>angle °</span>${num('fa', (it.angle_rad * 180 / Math.PI).toFixed(1))}<span></span><span></span>`;
+  h += '</div>';
+  if (!ent) h += fieldsForm(it.type, it.typed, 'tf') +
+    `<div class="form"><span>raw</span><input id="fraw" class="raw" value="${it.raw}" spellcheck="false"></div>`;
+  h += '<div class="btns"><button id="fapply">Apply</button>';
   if (!ent) h += '<button id="fdup" title="Copy to the end of the group (no index shift)">Duplicate</button><button id="fdel" title="Del">Delete</button>';
   h += '</div>';
   const shared = S.loc.shared_with.filter((l) => S.locs[l] && S.loc.nav === S.locs[l].nav);
@@ -134,14 +173,18 @@ function editForm(it) {
 
 function bindEditForm(it) {
   const v = (id) => ($(id) && $(id).value !== '' ? +$(id).value : null);
+  if (it.type !== 'entry') bindFields('tf', it.typed);
   $('fapply').addEventListener('click', () => {
     const pos = { x: v('fx'), y: v('fy'), z: v('fz') };
     if (it.type === 'entry') {
       const a = v('fa');
       return edit('entry', { k: it.index, ...pos, angle_rad: a == null ? null : a * Math.PI / 180 });
     }
+    // a hand-edited raw record wins; otherwise only the typed fields that changed are sent
     const raw = $('fraw').value.trim().toLowerCase();
-    edit('item', { ...itemAddr(it), ...pos, angle_deg: v('fa'), raw: raw !== it.raw ? raw : null });
+    if (raw !== it.raw) return edit('item', { ...itemAddr(it), ...pos, raw });
+    const f = Object.fromEntries(Object.entries(readFields('tf')).filter(([k, x]) => x !== it.typed[k]));
+    edit('item', { ...itemAddr(it), ...pos, fields: Object.keys(f).length ? f : null });
   });
   $('fdup')?.addEventListener('click', async () => {
     const j = await edit('duplicate', itemAddr(it));
@@ -153,6 +196,66 @@ function bindEditForm(it) {
 async function deleteItem(it) {
   if (it?.type == null || it.type === 'entry') return;
   if (await edit('delete', itemAddr(it))) select(null);
+}
+
+// ---- add item palette: type + typed fields + target group, then a click in the top-down view places it ---------
+// The new item is appended to the group (no index shift). Its y is that of the nearest item (edit it after).
+const PAL = { type: 2, group: null, vals: null };
+function renderPalette() {
+  const P = S.palette;
+  if (!P || !S.loc) return;
+  if (S.loc.nav == null) { $('palette').innerHTML = '<p class="muted">This location has no layout file.</p>'; return; }
+  const T = P.types.find((x) => x.type === PAL.type);
+  PAL.vals ??= { ...T.template, ...(PAL.type === 10 ? { collect_bit: P.free_collect_bit } : {}) };
+  const groups = [];
+  for (const b of S.block === 0 ? [0] : [0, S.block]) {
+    (S.loc.blocks[b]?.group_info || []).forEach((gi, g) => groups.push({ key: `${b}/${g}`, b, g, ...gi,
+      n: S.loc.blocks[b].groups[g].length }));
+  }
+  if (!groups.some((x) => x.key === PAL.group)) PAL.group = groups.find((x) => x.b === S.block)?.key ?? groups[0]?.key;
+  const G = groups.find((x) => x.key === PAL.group);
+  const lim = S.loc.limits?.[S.block];
+  const hint = !G ? 'This block has no group.' : G.permanent ? 'Group 0 of block 0: always there (permanent content).' :
+    G.spawned_by.length ? `Spawned by ${G.spawned_by.join(', ')}.` :
+    'No script or trigger of this block spawns this group: the item will not appear in game.';
+  $('palette').innerHTML =
+    `<div class="form fields"><span>type</span><select id="ptype">${P.types.map((t) =>
+      opt(t.type, `${t.type} ${NAMES[t.type] ?? t.name}`, PAL.type)).join('')}</select>` +
+    `<span>group</span><select id="pgroup">${groups.map((x) =>
+      opt(x.key, `block ${x.b} · group ${x.g} (${x.n} items)`, PAL.group)).join('')}</select></div>` +
+    `<p class="${G && (G.permanent || G.spawned_by.length) ? 'muted' : 'warn'}">${esc(hint)}</p>` +
+    fieldsForm(PAL.type, PAL.vals, 'pf') +
+    `<div class="btns"><button id="pplace" class="tab${S.placing ? ' on' : ''}">${S.placing ? 'Click on the map… (Esc)' : 'Place on map'}</button>` +
+    '<button id="pcentre" title="At the centre of the top-down view">Add at view centre</button></div>' +
+    (lim ? `<p class="muted">Variant ${S.block}: parse arena ${lim.arena} / ${P.limits.arena} bytes (8 per item), ` +
+      `waypoints ${lim.waypoints} / ${P.limits.waypoints}.</p>` : '') +
+    (PAL.type === 10 ? '<p class="assumed">Collect bit: one per timed prop (0..49 used by the game). Bits 50..63 are assumed free.</p>' : '') +
+    (PAL.type === 4 ? '<p class="muted">Door: walking into the box loads the destination at that entry point. Object = door model, or box only.</p>' : '');
+  bindFields('pf', PAL.vals);
+  $('ptype').addEventListener('change', () => { PAL.type = +$('ptype').value; PAL.vals = null; S.placing = null; renderPalette(); });
+  $('pgroup').addEventListener('change', () => { PAL.group = $('pgroup').value; renderPalette(); });
+  $('pf')?.addEventListener('change', () => { PAL.vals = readFields('pf'); });
+  $('pplace').addEventListener('click', () => {
+    S.placing = S.placing ? null : true;
+    if (S.placing) { setView('2d'); status('Click in the top-down view to place the new item (Esc cancels)'); }
+    renderPalette();
+  });
+  $('pcentre').addEventListener('click', () => addItemAt(cam.cx, cam.cz));
+}
+
+async function addItemAt(x, z) {
+  S.placing = null;
+  const [b, g] = PAL.group.split('/').map(Number);
+  PAL.vals = readFields('pf');
+  // y: the nearest item (in x, z) of the location, else 0; the floor height is not derived from the BSP
+  let y = 0, bd = Infinity;
+  for (const it of visibleItems()) {
+    const d = Math.hypot(it.x - x, it.z - z);
+    if (d < bd && it.y != null) { bd = d; y = it.y; }
+  }
+  const j = await edit('add', { b, g, type: PAL.type, x: Math.round(x), y: Math.round(y), z: Math.round(z), fields: PAL.vals });
+  if (j) { PAL.vals = null; renderPalette(); select(`${b}/${g}/${j.index}`); }
+  else renderPalette();
 }
 
 // ---- collision cells (mode 'cells'): the cell is addressed by an inside point, see backend.bsp_json -------------
@@ -350,6 +453,7 @@ window.addEventListener('mouseup', (e) => {
     return it.type === 'entry' ? edit('entry', { k: it.index, ...pos }) : edit('item', { ...itemAddr(it), ...pos });
   }
   if (d.moved || e.target !== cv) return;
+  if (S.placing && S.mode === 'items') return addItemAt(...toW(e.offsetX, e.offsetY));
   if (S.mode === 'cells') {
     const [x, z] = toW(e.offsetX, e.offsetY);
     const hits = brushes2d.filter((b) => b.poly.length >= 3 && inPoly(b.poly, x, z));
@@ -398,7 +502,7 @@ const view3d = new View3D($('view3d'), { select: (k) => select(k), visibleItems,
 
 async function openLocation(id, block, item) {
   status('Loading…');
-  S.sel = null; S.cell = null;
+  S.sel = null; S.cell = null; S.placing = null;
   try {
     const [loc, bspj] = await Promise.all([api(`/api/location/${id}?lang=${S.lang}`), api(`/api/bsp/${id}`)]);
     S.loc = loc; S.bsp = bspj;
@@ -418,9 +522,10 @@ async function openLocation(id, block, item) {
 // after an edit: same location, view and selection (the item keeps its key unless it was deleted)
 async function reload() {
   status('Saving…');
-  const [loc, bspj] = await Promise.all([api(`/api/location/${S.loc.id}?lang=${S.lang}`), api(`/api/bsp/${S.loc.id}`)]);
+  const [loc, bspj, pal] = await Promise.all([api(`/api/location/${S.loc.id}?lang=${S.lang}`), api(`/api/bsp/${S.loc.id}`),
+    api(`/api/palette?lang=${S.lang}`)]);
   const sel = S.sel;
-  S.loc = loc; S.bsp = bspj; S.cell = null;
+  S.loc = loc; S.bsp = bspj; S.cell = null; S.palette = pal;
   prepare2d(); refresh(false);
   if (S.mode === 'items' && sel) select(sel);
   if (S.mode === 'cells') selectCell(null);
@@ -447,7 +552,7 @@ async function buildRom() {
 }
 
 function refresh(refit) {
-  renderList(); renderScripts(); renderLegend(); renderDetails(null);
+  renderList(); renderScripts(); renderLegend(); renderDetails(null); renderPalette();
   if (refit) fit2d();
   draw2d();
   view3d.load(S.loc, S.bsp, refit);
@@ -461,13 +566,15 @@ function setView(v) {
 }
 
 async function init() {
-  const j = await api('/api/locations');
-  S.locs = j.locations;
+  const [j, pal] = await Promise.all([api('/api/locations'), api(`/api/palette?lang=${S.lang}`)]);
+  S.locs = j.locations; S.palette = pal;
   $('loc').innerHTML = S.locs.map((l) => `<option value="${l.id}">${l.id} · ${esc(l.place)}</option>`).join('');
   $('lang').innerHTML = j.langs.map((l) => `<option>${l}</option>`).join('');
   $('loc').addEventListener('change', () => openLocation(+$('loc').value));
   $('block').addEventListener('change', () => { S.block = +$('block').value; location.hash = `loc=${S.loc.id}&block=${S.block}`; refresh(false); });
-  $('lang').addEventListener('change', () => { S.lang = $('lang').value; openLocation(S.loc.id, S.block); });
+  $('lang').addEventListener('change', async () => {
+    S.lang = $('lang').value; S.palette = await api(`/api/palette?lang=${S.lang}`); openLocation(S.loc.id, S.block);
+  });
   $('tab2d').addEventListener('click', () => setView('2d'));
   $('modeCells').addEventListener('click', () => setMode(S.mode === 'cells' ? 'items' : 'cells'));
   $('undo').addEventListener('click', () => edit('undo'));
@@ -475,6 +582,7 @@ async function init() {
   $('build').addEventListener('click', buildRom);
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'Escape' && S.placing) { S.placing = null; renderPalette(); status('Placing cancelled'); }
     if (e.key === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); edit('undo'); }
     if (e.key === 'Delete' && S.mode === 'items' && !S.sel?.startsWith('f/')) deleteItem(visibleItems().find((i) => i.key === S.sel));
   });

@@ -6,10 +6,12 @@
 API (JSON unless noted):
   GET /api/locations                   the 33 locations
   GET /api/location/<id>?lang=en       layout: entry points, blocks (groups of items, scripts as text)
+  GET /api/palette?lang=en             item types (typed fields, templates), NPC / prop / object ids, entry ids
   GET /api/bsp/<id>                    collision brushes (vertices + faces, layout units)
   GET /api/model/<entry>.glb           BMD0 entry as GLB (model/gltf-binary)
   GET /api/edits                       saved edits [kind, entry], undo depth
-  POST /api/edit {op, loc, ...}        op: item (b, g, i, x?, y?, z?, angle_deg?, raw?), duplicate (b, g, i),
+  POST /api/edit {op, loc, ...}        op: item (b, g, i, x?, y?, z?, angle_deg?, raw?, fields?),
+                                       add (b, g, type, x, y, z, fields?), duplicate (b, g, i),
                                        delete (b, g, i), entry (k, x?, y?, z?, angle_rad?), bsp_delete (p),
                                        bsp_move (p, delta), bsp_box (lo, hi),
                                        furniture (i, prop?, x?, z?, rot?) = default hotel room furniture, revert, undo
@@ -59,6 +61,8 @@ class Handler(BaseHTTPRequestHandler):
             if m := re.fullmatch(r'/api/location/(\d+)', p):
                 lang = q.get('lang', ['en'])[0]
                 return self._send(200, json.dumps(backend.location_json(int(m[1]), lang)))
+            if p == '/api/palette':
+                return self._send(200, json.dumps(backend.palette_json(q.get('lang', ['en'])[0])))
             if m := re.fullmatch(r'/api/bsp/(\d+)', p):
                 return self._send(200, backend.bsp_json(int(m[1])))
             if p == '/api/edits':
@@ -95,7 +99,10 @@ def edit(a: dict):
     op, loc = a['op'], a.get('loc')
     pos = {k: a[k] for k in ('x', 'y', 'z') if a.get(k) is not None}
     if op == 'item':
-        project.edit_item(loc, a['b'], a['g'], a['i'], angle_deg=a.get('angle_deg'), raw=a.get('raw'), **pos)
+        project.edit_item(loc, a['b'], a['g'], a['i'], angle_deg=a.get('angle_deg'), raw=a.get('raw'),
+                          fields=a.get('fields'), **pos)
+    elif op == 'add':
+        return {'index': project.add_item(loc, a['b'], a['g'], a['type'], a['x'], a['y'], a['z'], a.get('fields'))}
     elif op == 'duplicate':
         return {'index': project.duplicate_item(loc, a['b'], a['g'], a['i'])}
     elif op == 'delete':

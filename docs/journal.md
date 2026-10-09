@@ -750,3 +750,59 @@ text or bg_composite.
   - `test_layout.py` needs `rom_bin/catalog.csv`, so setup now also runs `tools/catalog.py`.
 - **Found during the test**: `ndstool -x` writes the arm9 footer `21 06 C0 DE …` (12 bytes) at the end of `arm9.bin`. The
   project's `rom/arm9.bin` never had it. Without stripping it, the hash differs, although the code is identical.
+
+## 2026-10-09 — Editor milestone 3: "add item" palette, typed fields
+
+- **Fields per type** (`layout.FIELDS`), from Nav_SpawnEntity. The constructor never reads these bytes:
+  - NPC/prop +0xF (values 0..4 in the data);
+  - door +0x14 (0..4);
+  - trigger +0xE/+0xF;
+  - event watcher +0xB (always 1).
+
+  So the editor keeps them as they are and offers no field for them.
+  - Prop ids are a u8: type 2 = 0..255, type 10 = 0x47..0x146.
+  - Waypoint links are u16 in the file, but Nav_AddWaypoint reads only the low byte.
+- **Model tables** (scan of {u32, u16 BMD0, u16} records until the entry is not a BMD0):
+  - NPC: 63 records;
+  - object: 30 records, then the prop table starts, so door +0x13 = 30 = box only;
+  - prop: 331 records.
+- **Timed prop +0xB is a collect bit**, not a flag. Nav_SpawnEntity tests bit +0xB of the u32 array at [G]+4.
+  - The 50 orbs use 0..49, each once. Duplicating one would make collecting it hide both.
+  - The editor gives a new or copied orb the first free bit (50) and refuses a used one.
+  - ASSUMED: bits 50..63 are free (the second u32 word). Not checked in code.
+- **Two runtime limits, CONFIRMED by code**, now checked on every layout save (`layout.limit_errors`, also in
+  `layout.py verify`):
+  - Map_LoadNav parses into a 0x800-byte arena. Each non-empty array costs n·record + 8: entry points 4, the
+    2 block slots 0x24, and per parsed block: groups 8, items of each group 8, scripts 8, c6 8, c4 8, c5 12.
+    - The originals peak at 1628 bytes (location 13, variant 1), so 52 more items fit there.
+  - Nav_AddWaypoint appends to a 32-pointer array at world+0x6C with no bound check. The count byte sits right
+    after it, at +0xEC.
+    - The originals peak at 20 waypoints (location 2).
+- **Location checks** (`project.check_item`):
+  - door destination has that entry point;
+  - trigger group/script exist in the variant block(s);
+  - waypoint links point at another waypoint of the same group;
+  - collect bit unused.
+
+  Run on all 1285 original items, they fail only the 2 doors already known to point at a missing entry point
+  (location 31 → 2, entry 3).
+- **Tests** (`tests/test_editor_project.py`, 13/13):
+  - typed get/set round-trip on all 1290 items;
+  - adding each of the 10 types, then undo;
+  - refusals;
+  - both limits: the 53rd item in location 13 and the 33rd waypoint in location 2 are refused.
+- **UI test**: headless Edge driven over CDP (stdlib client, scratchpad). It covered:
+  - door through "Add at view centre": the entry list follows the destination;
+  - typed edit of size and destination;
+  - NPC 22 placed by a click on the map;
+  - used collect bit refused;
+  - all edits undone.
+- **Emulator, CONFIRMED** (`build/palette_test/`). Built through `project.add_item` into location 5, block 0 group 0:
+  - prop 102 `YetiStatue`, never placed by any layout, at (−355, 15, −48);
+  - a box-only door to location 6 entry 0 at (−390, 15, −48), size 10×30×10.
+
+  Then savestate `loc5_control_unlocked`, warp to 5/entry 8:
+  - a prop actor (vtable 0x0212FD44) is at x −355, z −48, y snapped to 14.69;
+  - the statue is visible, and absent on the reference ROM with the same steps (`yeti_added.png` / `yeti_original.png`);
+  - the door box is in RAM (half-size 5/15/5, kind 0x12, dest 6, entry 0);
+  - the Sim walked into it and location 6 loaded (`door_to_loc6.png`).

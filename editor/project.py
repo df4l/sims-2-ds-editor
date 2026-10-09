@@ -11,6 +11,10 @@ Edits are saved as soon as they are made, one file per edited rom.bin entry (dec
   build/editor_project/furniture/NNNN.bin  default furniture of room slot NNNN (24 bytes, patched into arm9.bin)
 Nothing under /rom/ or rom_bin/ is ever written.
 
+New items (add_item) are appended to their group, so no index shifts. Every layout save checks the runtime limits
+(layout.limit_errors: parse arena, waypoint list). Typed field edits go through check_item (door target, trigger
+group / script, waypoint links, unique collect bit).
+
 Item indices: scripts address an actor as (g, i) = item i (1-based) of group g (0-based) and waypoints link to
 1-based items of their own group (docs/formats/layout.md). Deleting an item shifts the items after it, so those
 references are renumbered. Data (all 32 layouts): every (g, i) reference is in a variant block and resolves inside
@@ -141,9 +145,86 @@ def load_layout(loc: int):
 
 
 def _save_layout(nav, lay):
+    errs = layout.limit_errors(lay)
+    if errs:
+        raise EditError('; '.join(errs))
     data = layout.write(lay)
     layout.parse(data)                       # every invariant of the parser still holds
     _store('layout', nav, data)
+
+
+def entry_ids(loc: int) -> list:
+    """Entry point ids of a location (edited layout if any), the targets a door to it can name."""
+    nav, _ = entries_of(loc)
+    return [] if nav is None else [e[0xC] for e in layout.parse(current('layout', nav)).entries]
+
+
+def collect_bits(skip=None) -> dict:
+    """{collect bit: (location, block, group, item)} of every timed prop of every layout (edited copies included).
+    skip = (layout entry, block, group, item) not to count."""
+    out, seen = {}, set()
+    for L in read_table():
+        nav = L['nav']
+        if nav == NONE or nav in seen:
+            continue
+        seen.add(nav)
+        for b, blk in enumerate(layout.parse(current('layout', nav)).blocks):
+            for g, grp in enumerate(blk.groups):
+                for i, it in enumerate(grp.items):
+                    if it.type == 10 and (nav, b, g, i) != skip:
+                        out[it.get('collect_bit')] = (L['location'], b, g, i)
+    return out
+
+
+def free_collect_bit() -> int:
+    used = collect_bits()
+    lo, hi = layout.FIELDS[10][3][3:5]
+    free = [k for k in range(lo, hi + 1) if k not in used]
+    if not free:
+        raise EditError('no free collect bit left for a timed prop')
+    return free[0]
+
+
+def check_item(loc, lay, b, g, i):
+    """Checks that need the location: door target, trigger group / script, waypoint links, unique collect bit."""
+    it = lay.blocks[b].groups[g].items[i]
+    if it.type == 4:
+        dest, entry = it.get('dest'), it.get('entry')
+        if dest >= len(read_table()):
+            raise EditError(f'door destination {dest}: no such location (0..{len(read_table()) - 1})')
+        ids = [e[0xC] for e in lay.entries] if dest == loc else entry_ids(dest)
+        if entry not in ids:
+            raise EditError(f'door: location {dest} has no entry point {entry} (it has {ids or "none"})')
+    elif it.type == 3:
+        grp, scr = it.get('group'), it.get('script')
+        # the trigger runs (group, script) of the selected variant block: block b, or for block 0 any variant
+        for vb in ([b] if b else range(1, len(lay.blocks)) or [0]):
+            blk = lay.blocks[vb]
+            if grp > len(blk.groups) or scr > len(blk.scripts):
+                raise EditError(f'trigger: block {vb} has {len(blk.groups)} groups and {len(blk.scripts)} scripts '
+                                f'(1-based, 0 = none), not group {grp} script {scr}')
+    elif it.type == 9:
+        items = lay.blocks[b].groups[g].items
+        for k in range(4):
+            n = it.get(f'link{k + 1}')
+            if n and (n > len(items) or n == i + 1 or items[n - 1].type != 9):
+                raise EditError(f'waypoint link{k + 1} = {n}: must be 0 or the 1-based index of another waypoint '
+                                f'of group {g}')
+    elif it.type == 10:
+        nav, _ = entries_of(loc)
+        other = collect_bits(skip=(nav, b, g, i)).get(it.get('collect_bit'))
+        if other:
+            raise EditError(f'collect bit {it.get("collect_bit")} already used by the timed prop at location {other[0]} '
+                            f'block {other[1]} group {other[2]} item {other[3] + 1} (collecting one would hide both); '
+                            f'free: {free_collect_bit()}')
+
+
+def _set_fields(it, fields):
+    for k, v in (fields or {}).items():
+        try:
+            it.set(k, int(v))
+        except ValueError as e:
+            raise EditError(str(e)) from None
 
 
 def _item(lay, b, g, i):
@@ -160,9 +241,9 @@ def _s16(v):
     return v
 
 
-def edit_item(loc, b, g, i, x=None, y=None, z=None, angle_deg=None, raw=None):
-    """Move an item and / or set its angle (types 1, 2, 4: s16 degrees at +8) or its whole raw record
-    (same size and type, so the group layout does not change)."""
+def edit_item(loc, b, g, i, x=None, y=None, z=None, angle_deg=None, raw=None, fields=None):
+    """Move an item and / or set its angle (types 1, 2, 4: s16 degrees at +8), typed fields (layout.FIELDS) or its
+    whole raw record (same size and type, so the group layout does not change)."""
     with _lock:
         nav, lay = load_layout(loc)
         it = _item(lay, b, g, i)
@@ -177,7 +258,35 @@ def edit_item(loc, b, g, i, x=None, y=None, z=None, angle_deg=None, raw=None):
             if it.type not in (1, 2, 4):
                 raise EditError(f'type {it.type} has no angle')
             struct.pack_into('<h', it.raw, 8, _s16(angle_deg))
+        _set_fields(it, fields)
+        if fields or raw is not None:
+            check_item(loc, lay, b, g, i)
         _save_layout(nav, lay)
+
+
+def add_item(loc, b, g, t, x, y, z, fields=None):
+    """Append a new item of type t (layout.new_item template + fields) to group g of block b. Appending shifts no
+    index. A timed prop without a collect_bit gets the first free one. Returns its index."""
+    with _lock:
+        nav, lay = load_layout(loc)
+        try:
+            items = lay.blocks[b].groups[g].items
+        except IndexError:
+            raise EditError(f'no group {b}/{g}') from None
+        if len(items) >= 0xFF:
+            raise EditError('group is full (255 items)')
+        try:
+            it = layout.new_item(t, _s16(x), _s16(y), _s16(z))
+        except ValueError as e:
+            raise EditError(str(e)) from None
+        fields = dict(fields or {})
+        if t == 10 and fields.get('collect_bit') is None:
+            fields['collect_bit'] = free_collect_bit()
+        _set_fields(it, {k: v for k, v in fields.items() if v is not None})
+        items.append(it)
+        check_item(loc, lay, b, g, len(items) - 1)
+        _save_layout(nav, lay)
+        return len(items) - 1
 
 
 def duplicate_item(loc, b, g, i, dx=8, dz=8):
@@ -193,6 +302,8 @@ def duplicate_item(loc, b, g, i, dx=8, dz=8):
         if new.type == 9:                    # a copied waypoint starts unlinked
             for o in (10, 12, 14, 16):
                 new.raw[o] = 0
+        if new.type == 10:                   # a copied timed prop gets its own collect bit
+            new.set('collect_bit', free_collect_bit())
         items.append(new)
         _save_layout(nav, lay)
         return len(items) - 1

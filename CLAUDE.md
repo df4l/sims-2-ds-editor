@@ -113,7 +113,13 @@ Code-driven approach:
 
 > Update this section at the end of every session.
 
-- Current phase: 5 (editor, milestone 2 done)
+- Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
+- Latest progress (2026-10-09): "add item" palette (all 10 constructed types; named NPC/prop/object lists; door
+  destination + entry; target group with a "spawned by" hint; click to place) and typed field editors
+  (`layout.FIELDS`, from Nav_SpawnEntity). Checks: door entry exists, trigger group/script, waypoint links, unique orb
+  collect bit. Two runtime limits, CONFIRMED by code and checked on every save: Map_LoadNav arena 0x800 bytes
+  (8 per item) and 32 waypoints (docs/formats/layout.md §4c). End-to-end CONFIRMED in the emulator: new prop model
+  (YetiStatue) + new door 5 → 6 (build/palette_test/).
 - Git repository (2026-10-07): github df4l/sims-2-ds-editor, no game data committed; a new clone is set up with
   `tools/setup_rom.py <game.nds>` (README.md).
 - Latest progress (2026-10-07): placement data (wall flag + offsets) decoded for all 182 furniture props (jump table +
@@ -135,8 +141,7 @@ Code-driven approach:
 - Model textures fixed (2026-10-06): `tools/nitro.py bmd0_to_glb` replaces the nitrogen CLI. It fixes nitrogen's flipped V,
   its lost repeat/mirror wrap (taken from the material teximage_param) and its wrong NNS Maya texture SRT. 175/175 regenerated and
   checked against the game screenshots; the Maya formula itself comes from noclip (not confirmed in arm9).
-- Next step: milestone 3 ideas (to agree with the user):
-  - an "add item" palette (new item of any type or model, not just duplicate), with typed field editors (door destination / entry, NPC id, box sizes);
+- Next step: rest of milestone 3 (to agree with the user):
   - drag in 3D;
   - editing scripts and text from the editor;
   - waypoint link display and editing;

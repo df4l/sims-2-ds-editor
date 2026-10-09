@@ -42,6 +42,47 @@ PROP_MODELS = 0x0211CD2C     # FUN_02014c30 (types 2 and 10)
 OBJECT_MODELS = 0x0211CC3C   # FUN_02010cb4 (type 4)
 
 
+N_NPCS = 63                  # records of NPC_MODELS (the 64th is not a model)
+N_OBJECTS = 30               # records of OBJECT_MODELS (PROP_MODELS follows); door +0x13 = 30 = box only
+N_PROPS = 331                # records of PROP_MODELS; type 2 stores a u8 id, type 10 id - 0x47 as a u8
+TIMED_PROP_BIAS = 0x47
+
+# Editable fields per type, as read by Nav_SpawnEntity / Nav_AddWaypoint: (name, offset, struct fmt, min, max, bias).
+# Stored value = value - bias. Bytes not listed are never read by the constructors (kept as they are).
+# Waypoint links are u16 in the file but the code reads only their low byte.
+FIELDS = {
+    1: [('angle_deg', 8, 'h', -360, 360, 0), ('npc', 0xE, 'B', 0, N_NPCS - 1, 0)],
+    2: [('angle_deg', 8, 'h', -360, 360, 0), ('prop', 0xE, 'B', 0, 255, 0)],
+    3: [('size_x', 9, 'B', 0, 255, 0), ('size_y', 0xA, 'B', 0, 255, 0), ('size_z', 0xB, 'B', 0, 255, 0),
+        ('repeat', 8, 'B', 0, 255, 0), ('group', 0xC, 'B', 0, 255, 0), ('script', 0xD, 'B', 0, 255, 0)],
+    4: [('angle_deg', 8, 'h', -360, 360, 0), ('size_x', 0xF, 'B', 0, 255, 0), ('size_y', 0x10, 'B', 0, 255, 0),
+        ('size_z', 0x11, 'B', 0, 255, 0), ('dest', 0xE, 'B', 0, 255, 0), ('entry', 0x12, 'B', 0, 255, 0),
+        ('object', 0x13, 'B', 0, N_OBJECTS, 0)],
+    5: [('radius', 8, 'H', 0, 0xFFFF, 0), ('r', 0xB, 'B', 0, 31, 0), ('g', 0xC, 'B', 0, 31, 0), ('b', 0xD, 'B', 0, 31, 0)],
+    7: [('kind', 8, 'B', 0, 255, 0), ('size_x', 9, 'B', 0, 255, 0), ('size_y', 0xA, 'B', 0, 255, 0),
+        ('size_z', 0xB, 'B', 0, 255, 0)],
+    8: [('arg8', 8, 'B', 0, 255, 0), ('mode', 9, 'B', 0, 255, 0), ('argA', 0xA, 'B', 0, 255, 0)],
+    9: [('radius', 8, 'B', 0, 255, 0)] + [(f'link{k + 1}', 0xA + 2 * k, 'B', 0, 255, 0) for k in range(4)],
+    # hour slot: shown while (hour mod 24) - 8 * slot is in 0..7; collect_bit: bit of the u32 array at [G]+4,
+    # set once collected (0..49 used, one per orb; 0..63 = the two words the data spans, ASSUMED free above 49)
+    10: [('prop', 8, 'B', TIMED_PROP_BIAS, TIMED_PROP_BIAS + 255, TIMED_PROP_BIAS), ('hour_slot', 9, 'B', 0, 2, 0),
+         ('value', 0xA, 'B', 0, 255, 0), ('collect_bit', 0xB, 'B', 0, 63, 0)],
+    11: [('sound_slot', 8, 'B', 0, 255, 0)],
+}
+# New item templates: the most common value of each byte over the 1290 items of the 32 files (ids excepted)
+TEMPLATE = {
+    1: {}, 2: {}, 3: {'size_x': 20, 'size_y': 20, 'size_z': 20},
+    4: {'size_x': 15, 'size_y': 2, 'size_z': 15, 'dest': 5, 'object': N_OBJECTS},
+    5: {'radius': 13, 'r': 31, 'g': 31, 'b': 31}, 7: {'size_x': 15, 'size_z': 30},
+    8: {'mode': 1, 'raw': {0xB: 1}}, 9: {'radius': 8}, 10: {'prop': TIMED_PROP_BIAS}, 11: {'sound_slot': 29},
+}
+
+# Map_LoadNav parses into a 0x800-byte arena: each non-empty array costs n * record + 8 (entry points 4, block
+# slots 2 * 0x24, per parsed block: groups 8, items of each group 8, scripts 8, c6 8, c4 8, c5 12)
+ARENA = 0x800
+# Nav_AddWaypoint appends to a 32-pointer array at world+0x6C (count byte at +0xEC) without a bound check
+MAX_WAYPOINTS = 32
+
 _ARM9 = None
 
 
@@ -70,6 +111,20 @@ class Item:
     def set_pos(self, x, y, z):
         struct.pack_into('<3h', self.raw, 0, x, y, z)
 
+    def get(self, name):
+        _, o, f, _, _, bias = _field(self.type, name)
+        return struct.unpack_from('<' + f, self.raw, o)[0] + bias
+
+    def set(self, name, v):
+        _, o, f, lo, hi, bias = _field(self.type, name)
+        if not (isinstance(v, int) and lo <= v <= hi):
+            raise ValueError(f'{ITEM_NAME[self.type]} {name} must be an integer in {lo}..{hi}, not {v!r}')
+        struct.pack_into('<' + f, self.raw, o, v - bias)
+
+    def typed(self) -> dict:
+        """Values of the FIELDS of this type (stored value + bias)."""
+        return {f[0]: self.get(f[0]) for f in FIELDS.get(self.type, ())}
+
     def fields(self) -> dict:
         """Type-specific fields, as read by Nav_SpawnEntity / Nav_AddWaypoint."""
         r, t = self.raw, self.raw[6]
@@ -94,6 +149,29 @@ class Item:
         if t == 11:
             return {'sound_slot': r[8]}
         return {}
+
+
+def _field(t, name):
+    for f in FIELDS.get(t, ()):
+        if f[0] == name:
+            return f
+    raise ValueError(f'type {t} has no field {name!r}')
+
+
+def new_item(t: int, x=0, y=0, z=0) -> Item:
+    """Item of type t with the TEMPLATE values (zeros elsewhere, as in the files)."""
+    if t not in FIELDS:
+        raise ValueError(f'no constructor for item type {t}')
+    it = Item(bytearray(ITEM_SIZE[t]))
+    it.raw[6] = t
+    it.set_pos(x, y, z)
+    tpl = TEMPLATE[t]
+    for o, v in tpl.get('raw', {}).items():
+        it.raw[o] = v
+    for k, v in tpl.items():
+        if k != 'raw':
+            it.set(k, v)
+    return it
 
 
 @dataclass
@@ -224,6 +302,36 @@ def write(lay: Layout) -> bytes:
     return bytes(out)
 
 
+def _arena_block(b: Block) -> int:
+    n = (8 * len(b.groups) + 8 if b.groups else 0) + sum(8 * len(g.items) + 8 for g in b.groups if g.items)
+    for count, rec in ((len(b.scripts), 8), (b.counts[3], 8), (b.counts[1], 8), (b.counts[2], 12)):
+        n += count * rec + 8 if count else 0
+    return n
+
+
+def arena_size(lay: Layout, variant: int) -> int:
+    """Bytes of the Map_LoadNav arena used when block 0 + block `variant` are loaded (ARENA max)."""
+    n = (4 * len(lay.entries) + 8 if lay.entries else 0) + (2 * 0x24 + 8 if lay.blocks else 0)
+    return n + _arena_block(lay.blocks[0]) + (_arena_block(lay.blocks[variant]) if variant else 0)
+
+
+def waypoint_count(lay: Layout, variant: int) -> int:
+    """Waypoints spawned when block 0 + block `variant` are loaded and all their groups spawned (MAX_WAYPOINTS max)."""
+    blocks = [lay.blocks[0]] + ([lay.blocks[variant]] if variant else [])
+    return sum(it.type == 9 for b in blocks for g in b.groups for it in g.items)
+
+
+def limit_errors(lay: Layout) -> list:
+    """Runtime limits broken by some variant (empty for the 32 original files: arena 1628 / 2048, waypoints 20 / 32)."""
+    errs = []
+    for v in range(len(lay.blocks)):
+        if (n := arena_size(lay, v)) > ARENA:
+            errs.append(f'variant {v}: Map_LoadNav arena {n} bytes > {ARENA} (8 bytes per item)')
+        if (n := waypoint_count(lay, v)) > MAX_WAYPOINTS:
+            errs.append(f'variant {v}: {n} waypoints > {MAX_WAYPOINTS} (Nav_AddWaypoint list)')
+    return errs
+
+
 def layouts():
     """(location record, layout entry index, bytes) for every location with a layout file."""
     for L in read_table():
@@ -240,6 +348,9 @@ def cmd_verify(_):
         seen.add(idx)
         try:
             same = write(parse(d)) == d
+            for e in limit_errors(parse(d)):
+                print(f'{idx:04d} (location {L["location"]}): LIMIT {e}')
+                same = False
         except ValueError as e:
             print(f'{idx:04d} (location {L["location"]}): PARSE ERROR {e}')
             bad += 1

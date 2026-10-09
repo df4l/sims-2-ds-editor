@@ -56,8 +56,55 @@ def _item_json(it):
     m = layout.model_of(it)
     f = it.fields()
     return {'type': it.type, 'type_name': layout.ITEM_NAME.get(it.type, str(it.type)),
-            'x': it.x, 'y': it.y, 'z': it.z, 'angle_deg': f.get('angle_deg'), 'fields': f,
+            'x': it.x, 'y': it.y, 'z': it.z, 'angle_deg': f.get('angle_deg'), 'fields': f, 'typed': it.typed(),
             'model': m, 'model_name': nitro.model_name(m) if m is not None else None, 'raw': it.raw.hex()}
+
+
+def _model_entry(tbl, i):
+    return struct.unpack_from('<H', roomfurn.arm9(), tbl + 8 * i + 4 - roomfurn.ARM9_BASE)[0]
+
+
+_palette = {}
+
+
+def palette_json(lang='en'):
+    """What the "add item" palette and the typed field editors offer: field specs + templates per type, the NPC /
+    prop / object ids with names, and the locations with their entry point ids (door targets, edited layouts)."""
+    if lang not in _palette:
+        _palette[lang] = {
+            'types': [{'type': t, 'name': layout.ITEM_NAME[t], 'size': layout.ITEM_SIZE[t],
+                       'fields': [{'name': n, 'min': lo, 'max': hi} for n, _, _, lo, hi, _ in spec],
+                       'template': layout.new_item(t).typed()} for t, spec in layout.FIELDS.items()],
+            'npcs': [{'id': i, 'name': layscript.npc_name(i, lang), 'model': nitro.model_name(_model_entry(layout.NPC_MODELS, i))}
+                     for i in range(layout.N_NPCS)],
+            'props': [{'id': i, 'name': nitro.model_name(_model_entry(layout.PROP_MODELS, i))} for i in range(layout.N_PROPS)],
+            'objects': [{'id': i, 'name': nitro.model_name(_model_entry(layout.OBJECT_MODELS, i))}
+                        for i in range(layout.N_OBJECTS)] + [{'id': layout.N_OBJECTS, 'name': '(box only)'}],
+            'limits': {'arena': layout.ARENA, 'waypoints': layout.MAX_WAYPOINTS}}
+    return {**_palette[lang], 'entry_ids': [project.entry_ids(L['location']) for L in table()],
+            'free_collect_bit': project.free_collect_bit()}
+
+
+def _group_info(lay, b):
+    """Per group of block b: the scripts that spawn it ((group, script) pairs of the script ops, 1-based group),
+    the trigger boxes that do, and whether it is the permanent group (block 0 group 0)."""
+    blk = lay.blocks[b]
+    out = [{'permanent': b == 0 and g == 0, 'spawned_by': []} for g in range(len(blk.groups))]
+    for si, s in enumerate(blk.scripts):
+        for op, args in s:
+            if op == 0x00:                           # despawn_item: its 'group' is a 0-based actor group
+                continue
+            a = layscript.decode_args(op, args)
+            for k in ('group', 'else_group'):
+                if 0 < a.get(k, 0) <= len(out):
+                    out[a[k] - 1]['spawned_by'].append(f'script {si + 1} ({layscript.OPS[op][0]})')
+    for grp in blk.groups:
+        for it in grp.items:
+            if it.type == 3 and 0 < it.get('group') <= len(out):
+                out[it.get('group') - 1]['spawned_by'].append('trigger box')
+    for o in out:
+        o['spawned_by'] = list(dict.fromkeys(o['spawned_by']))   # script order, no repeats
+    return out
 
 
 def location_json(loc: int, lang='en'):
@@ -76,10 +123,12 @@ def location_json(loc: int, lang='en'):
     for e in lay.entries:
         x, y, z, ang = struct.unpack_from('<4h', e)
         out['entries'].append({'id': e[0xC], 'x': x, 'y': y, 'z': z, 'angle_rad': ang / FX})
-    for b in lay.blocks:
+    for bi, b in enumerate(lay.blocks):
         out['blocks'].append({
-            'groups': [[_item_json(it) for it in g.items] for g in b.groups],
+            'groups': [[_item_json(it) for it in g.items] for g in b.groups], 'group_info': _group_info(lay, bi),
             'scripts': [[layscript.describe(op, args, lang, b) for op, args in s] for s in b.scripts]})
+    out['limits'] = [{'variant': v, 'arena': layout.arena_size(lay, v), 'waypoints': layout.waypoint_count(lay, v)}
+                     for v in range(len(lay.blocks))]
     return out
 
 

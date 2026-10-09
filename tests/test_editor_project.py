@@ -169,6 +169,75 @@ def test_furniture_edit_validate_undo_arm9():
     assert project.edited() == [] and project.patched_arm9() == orig
 
 
+def test_typed_fields_round_trip_all_items():
+    """Every item of the 32 files: writing back each typed field's own value leaves the record byte-identical."""
+    n = 0
+    for _, _, d in layout.layouts():
+        for blk in layout.parse(d).blocks:
+            for grp in blk.groups:
+                for it in grp.items:
+                    raw = bytes(it.raw)
+                    for k, v in it.typed().items():
+                        it.set(k, v)
+                    assert bytes(it.raw) == raw, raw.hex()
+                    n += 1
+    assert n == 1290                     # 33 layouts (22 and 23 share one), as tests/test_layout.py
+
+
+@fresh
+def test_add_every_type_then_undo():
+    nav = project.entries_of(5)[0]
+    n0 = len(lay(5).blocks[0].groups[0].items)
+    for t in layout.FIELDS:
+        i = project.add_item(5, 0, 0, t, 10, 0, -20)
+        it = lay(5).blocks[0].groups[0].items[i]
+        assert (i, it.type, it.x, it.z, len(it.raw)) == (n0, t, 10, -20, layout.ITEM_SIZE[t])
+        tpl = layout.new_item(t).typed()
+        if t == 10:
+            assert it.get('collect_bit') == 50                       # 0..49 used by the game
+            tpl['collect_bit'] = 50
+        assert it.typed() == tpl
+        project.undo()
+    assert project.current('layout', nav) == project.original('layout', nav)
+
+
+@fresh
+def test_add_typed_fields_and_refusals():
+    i = project.add_item(5, 1, 0, 1, 0, 0, 0, {'npc': 22, 'angle_deg': 90})
+    assert lay(5).blocks[1].groups[0].items[i].typed() == {'npc': 22, 'angle_deg': 90}
+    raises(lambda: project.add_item(5, 0, 0, 1, 0, 0, 0, {'npc': 63}), '0..62')
+    raises(lambda: project.add_item(5, 0, 0, 2, 0, 0, 0, {'prop': 256}), '0..255')
+    raises(lambda: project.add_item(5, 0, 0, 6, 0, 0, 0), 'no constructor')
+    raises(lambda: project.add_item(5, 0, 9, 2, 0, 0, 0), 'no group')
+    ids = project.entry_ids(6)
+    project.add_item(5, 0, 0, 4, 0, 0, 0, {'dest': 6, 'entry': ids[0]})
+    raises(lambda: project.add_item(5, 0, 0, 4, 0, 0, 0, {'dest': 6, 'entry': 99}), 'no entry point 99')
+    raises(lambda: project.add_item(5, 0, 0, 4, 0, 0, 0, {'dest': 40}), 'no such location')
+    n_scripts = len(lay(5).blocks[1].scripts)
+    raises(lambda: project.add_item(5, 1, 0, 3, 0, 0, 0, {'script': n_scripts + 1}), 'scripts')
+    g = lay(5).blocks[0].groups[0].items
+    not_wp = next(k for k, x in enumerate(g) if x.type != 9) + 1
+    raises(lambda: project.add_item(5, 0, 0, 9, 0, 0, 0, {'link1': not_wp}), 'another waypoint')
+    raises(lambda: project.add_item(5, 0, 0, 10, 0, 0, 0, {'collect_bit': 3}), 'already used')
+    # editing a typed field goes through the same checks
+    raises(lambda: project.edit_item(5, 1, 0, i, fields={'npc': 99}), '0..62')
+    project.edit_item(5, 1, 0, i, fields={'npc': 23})
+    assert lay(5).blocks[1].groups[0].items[i].get('npc') == 23
+
+
+@fresh
+def test_add_runtime_limits():
+    """Location 13 variant 1 uses 1628 / 2048 arena bytes: 52 more items fit (8 bytes each), the 53rd is refused.
+    Location 2 has 20 waypoints: 12 more fit in the 32-slot list."""
+    for _ in range(52):
+        project.add_item(13, 0, 0, 7, 0, 0, 0)
+    assert layout.arena_size(lay(13), 1) == 2044
+    raises(lambda: project.add_item(13, 0, 0, 7, 0, 0, 0), 'arena')
+    for _ in range(12):
+        project.add_item(2, 0, 0, 9, 0, 0, 0)
+    raises(lambda: project.add_item(2, 0, 0, 9, 0, 0, 0), 'waypoints')
+
+
 def test_room_furniture_matches_emulator():
     """World positions measured in RAM (actor +0x78/+0x7C/+0x80, +0x88) on 2026-10-07, fridge (wall) + bed (floor) per room."""
     import math
@@ -189,7 +258,9 @@ def test_room_furniture_matches_emulator():
 if __name__ == '__main__':
     for t in [test_no_edits_rombin_identical, test_move_angle_undo, test_entry_point, test_duplicate_then_delete_is_identity,
               test_delete_renumbers_script_refs_and_waypoints, test_delete_refuses_referenced_item,
-              test_bsp_edits_and_rombin, test_furniture_edit_validate_undo_arm9, test_room_furniture_matches_emulator]:
+              test_bsp_edits_and_rombin, test_furniture_edit_validate_undo_arm9, test_typed_fields_round_trip_all_items,
+              test_add_every_type_then_undo, test_add_typed_fields_and_refusals, test_add_runtime_limits,
+              test_room_furniture_matches_emulator]:
         t()
         print(t.__name__, 'OK')
     shutil.rmtree(project.DIR, ignore_errors=True)

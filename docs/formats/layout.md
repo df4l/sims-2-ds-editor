@@ -77,6 +77,13 @@ then the script area and tables (kept raw by tools/layout.py and moved as one pi
 | 11 | 12 | sound? | FUN_020d5680(u16 table 0x0212FCC8[+8], pos) (ASSUMED sound emitter) | u8 slot @+8 |
 | 0, 6 | 12 / – | none | no constructor (table entry 0) | |
 
+Bytes the constructors never read (Nav_SpawnEntity, CONFIRMED by code): NPC/prop +0xF (0..4 in the data), door +0x14
+(0..4), trigger +0xE/+0xF, type 8 +0xB (always 1). Id ranges (model tables scanned until a record is not a BMD0): NPC
+0..62, object 0..29 (30 = box only: the prop table starts right after), prop 0..330; type 2 stores a u8 (0..255),
+type 10 stores id − 0x47 (0x47..0x146). Waypoint links are u16 but Nav_AddWaypoint reads the low byte only.
+**Type 10 +0xB is a collect bit**: bit +0xB of the u32 array at [G]+4; the spawn is skipped once it is set. The 50 orbs
+use bits 0..49, each once. Editable fields + ranges: `layout.FIELDS`.
+
 Actor angles: the file stores **degrees**; the constructors convert to fx32 radians (180° → 12867 = π).
 Verified in RAM on the 6 objects of location 5 (−180 → −12867, 90 → 6433).
 
@@ -194,6 +201,18 @@ and in the `model_name` column of `rom_bin/layout_items.csv`. Location 5 for exa
 `Car`, `LicensePlate`, `Hubcap`, `Letter`, `Stool`; timed props `SkillCreativity` / `SkillBusiness` /
 `SkillBody` (the aspiration orbs — hence the hour slot and the "collected" flag). Type 4 objects seen so
 far are all doors; the door model is optional (box-only doors are the walk-in triggers and the town edges).
+
+## 4c. Runtime limits — CONFIRMED (code), checked by `layout.limit_errors`
+- **Parse arena**: Map_LoadNav allocates 0x800 bytes and parses block 0 + the selected block into it. Every non-empty
+  array costs `n * record + 8`: entry points 4, the 2 block slots 0x24 (always), and per parsed block groups 8,
+  items of each group 8 (Nav_ParseGroup), scripts 8 (Nav_ParseScripts), c6 8, c4 8, c5 12 (Map_ParseNavBlock).
+  Originals: at most 1628 bytes (location 13, variant 1). **Each added item costs 8 bytes.**
+- **Waypoints**: Nav_AddWaypoint appends to a 32-pointer array at world+0x6C (count byte at +0xEC) with no bound check,
+  so a 33rd waypoint would overwrite the count. Originals: at most 20 (location 2).
+
+Emulator (2026-10-09): a prop of a new model (102 YetiStatue) and a box-only door to location 6 were appended to
+location 5 group 0 with the editor. The prop spawns (y snapped to the floor), and the door takes the Sim to location 6
+(journal).
 
 ## 5. Evidence log
 - Parsing per the decompiled code on 32/32 files: every size/offset invariant holds, write(parse(f)) == f.

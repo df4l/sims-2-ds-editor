@@ -53,3 +53,24 @@ Assumed, not verified:
 - **Only new games** see the change: the table is copied into the game state (and the save) at new game.
 - The prop list offers the 182 furniture props (floor or wall, decoded from arm9 + their node files, exact placement).
   Other prop ids are refused: the game has no placement object for them.
+
+## Milestone 3, part 1: "Add item" palette and typed fields (2026-10-09)
+- **Add item** (sidebar):
+  - pick a type (all 10 types the game constructs) and its fields: NPC, prop and door model from named lists;
+    door destination plus an entry point of that location; box sizes; and so on;
+  - pick the target group (block 0 or the current variant). The panel says what spawns that group: permanent
+    group, scripts, trigger boxes. It warns when nothing does;
+  - then **Place on map** (click in the top-down view, Esc cancels) or **Add at view centre**.
+  - The item is appended to the group, so no index shifts. Its y is that of the nearest item; the game snaps
+    props to the floor.
+- **Typed fields** for the selected item replace hand-editing raw hex. Raw stays available.
+- Checks done by the server (`project.check_item`; the edit is refused, nothing changes):
+  - the door destination has that entry point;
+  - a trigger's group/script exist;
+  - waypoint links point at waypoints of the same group;
+  - an orb's collect bit is unused (new and copied orbs get the first free bit).
+- **Runtime limits** are checked on every save: the 0x800-byte parse arena (8 bytes per item) and 32 waypoints.
+  The panel shows the current use. See docs/formats/layout.md §4c.
+- Checked in the emulator: a new prop model and a new door to location 6 added to location 5 both work in game
+  (journal 2026-10-09).
+- Assumed, not verified: bits 50..63 are free collect bits.
