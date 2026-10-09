@@ -7,15 +7,16 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const glbCache = new Map();
 const loader = new GLTFLoader();
 
-function fetchGlb(entry) {
-  if (!glbCache.has(entry)) {
-    glbCache.set(entry, fetch(`/api/model/${entry}.glb`).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
+function fetchGlb(entry, tex) {   // tex: prop variant texture entry (couch colours, dirty toilets...), or null
+  const url = tex == null ? `/api/model/${entry}.glb` : `/api/model/${entry}.glb?tex=${tex}`;
+  if (!glbCache.has(url)) {
+    glbCache.set(url, fetch(url).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null));
   }
-  return glbCache.get(entry);
+  return glbCache.get(url);
 }
 
-async function loadModel(entry) {
-  const buf = await fetchGlb(entry);
+async function loadModel(entry, tex = null) {
+  const buf = await fetchGlb(entry, tex);
   if (!buf) return null;
   return new Promise((ok) => loader.parse(buf.slice(0), '', (g) => ok(g.scene), () => ok(null)));
 }
@@ -115,7 +116,7 @@ export class View3D {
     }
     this.root.items.add(g);
     if (it.model != null) {
-      loadModel(it.model).then((s) => {
+      loadModel(it.model, it.model_tex).then((s) => {
         if (!s || token !== this.token) return;
         s.userData.itemModel = true; s.visible = this.opts.ui.models(); g.add(s); this.render();
       });

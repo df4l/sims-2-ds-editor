@@ -26,6 +26,7 @@ ROOM_LOCS = 0x0211F9D4      # u32[6] location ids, index = room slot
 DEFAULTS = 0x0211FA70       # [6 slots][6 entries] {u8 prop, u8 x, u8 z, u8 rot}
 GRID_ENTRIES = 0x02127754   # u16[6] rom.bin entry of the room grid (read via FUN_020c3fc8)
 PROP_MODELS = 0x0211CD2C    # {u32 anim_list, u16 BMD0, u16 anim_count} per prop id
+JUMP_TABLE = 0x02011E2C     # Prop_CreatePlacementObject: addls pc,pc,prop lsl 2, then one b per prop id
 N_SLOTS, N_DEFAULT, MAX_ITEMS = 6, 6, 14
 N_PROPS = 331               # entries of PROP_MODELS (prop ids used by layouts and rooms)
 CELL = 2.0                  # 0x2000 fx32 per grid cell
@@ -57,6 +58,69 @@ def arm9() -> bytes:
     if _arm9 is None:
         _arm9 = (ROOT / 'rom' / 'arm9.bin').read_bytes()
     return _arm9
+
+
+# Colour variants (couch colours, dirty toilets...) share one BMD0 whose 8bpp texture is blank (all zeros) or the
+# default colour. The prop's Prop_CreatePlacementObject case swaps it (CONFIRMED, Ghidra 2026-10-09):
+#   ldrh r1,[r5,#0xa]; ldr r0,=TABLE; sub r1,r1,#BASE; ldrh r1,[r0,r1 lsl 1]   (entry = u16 TABLE[prop - BASE])
+#   Gfx_LoadTexPal256 0x020bd908(buf, entry, w, h, fmt)  rom.bin entry = 512-byte palette + w*h 8bpp texels
+#   Gfx_ReplaceModelTexture 0x020bbee0(actor + 0x1a4, buf)
+# Prop 104 loads its entry with a plain ldr. The arcade machines (164-176) have a blank screen texture too but no
+# such call: their screen is drawn by other code (not decoded).
+LOAD_TEX = 0x020bd908
+_prop_tex = None
+
+
+def _prop_texture_case(a9: bytes, prop: int):
+    w = lambda ad: struct.unpack_from('<I', a9, ad - ARM9_BASE)[0]
+
+    def rel(ad, i):
+        off = i & 0xFFFFFF
+        return ad + 8 + 4 * (off - (1 << 24) if off & 0x800000 else off)
+
+    def imm(i):
+        r, v = (i >> 8 & 15) * 2, i & 0xFF
+        return ((v >> r) | (v << (32 - r))) & 0xFFFFFFFF
+
+    ad = rel(JUMP_TABLE + 4 * prop, w(JUMP_TABLE + 4 * prop))
+    regs = {}   # register -> ('lit', value) | ('prop', base) | ('entry', table, base)
+    for _ in range(120):
+        i = w(ad)
+        rd, rn, rm = i >> 12 & 15, i >> 16 & 15, i & 15
+        if i & 0xFF7F0000 == 0xE51F0000:                                    # ldr rd,[pc,#+-imm]
+            regs[rd] = ('lit', w(ad + 8 + (i & 0xFFF if i & 0x800000 else -(i & 0xFFF))))
+        elif i & 0xFFFF0FFF == 0xE1D500BA:                                  # ldrh rd,[r5,#0xa] (prop id)
+            regs[rd] = ('prop', 0)
+        elif i & 0xFFF00000 == 0xE2400000 and regs.get(rn, ('',))[0] == 'prop':   # sub rd,rn,#imm
+            regs[rd] = ('prop', imm(i))
+        elif i & 0xFFF000F0 == 0xE19000B0:                                  # ldrh rd,[rn,rm]
+            t, p = regs.get(rn, ('',)), regs.get(rm, ('',))
+            regs[rd] = ('entry', t[1], p[1]) if t[0] == 'lit' and p[0] == 'prop' else ('',)
+        elif i & 0xFFF00FF0 == 0xE1A00080 and regs.get(rm, ('',))[0] == 'prop':  # mov rd,rm lsl #1
+            regs[rd] = regs[rm]
+        elif i >> 24 == 0xEB:                                               # bl
+            if rel(ad, i) == LOAD_TEX:
+                r1 = regs.get(1, ('',))
+                if r1[0] == 'entry':
+                    return struct.unpack_from('<H', a9, r1[1] + 2 * (prop - r1[2]) - ARM9_BASE)[0]
+                return r1[1] if r1[0] == 'lit' and r1[1] < 0x10000 else None
+            regs = {k: v for k, v in regs.items() if k > 3}
+        elif i >> 24 == 0xEA:                                               # b
+            ad = rel(ad, i)
+            continue
+        elif i == 0xE12FFF1E:                                               # bx lr
+            return None
+        ad += 4
+    return None
+
+
+def prop_texture(prop: int) -> int | None:
+    """rom.bin entry of the texture (512-byte palette + 8bpp texels) the game puts on the prop's model, or None
+    when the model keeps its own texture."""
+    global _prop_tex
+    if _prop_tex is None:
+        _prop_tex = [_prop_texture_case(arm9(), p) for p in range(N_PROPS)]
+    return _prop_tex[prop] if 0 <= prop < N_PROPS else None
 
 
 def room_locations(a9: bytes = None) -> list:

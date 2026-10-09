@@ -102,9 +102,7 @@ function renderFurniture(it) {
     ['room grid', `rom.bin ${F.grid_entry}: ${F.grid.width} x ${F.grid.depth} cells of ${F.grid.cell}, ${F.grid.walls} wall slots`]];
   const num = (id, v, max) => `<input id="${id}" type="number" step="1" min="0" max="${max}" value="${v}">`;
   $('details').innerHTML = `<table class="kv">${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>` +
-    `<div class="form"><span>prop</span><select id="ffp" class="wide">${F.props.map((p) =>
-      `<option value="${p.prop}"${p.prop === it.prop ? ' selected' : ''}>${p.prop} ${esc(p.name)} (${p.wall ? 'wall' : 'floor'})</option>`).join('')}` +
-    `${F.props.some((p) => p.prop === it.prop) ? '' : `<option value="${it.prop}" selected>${it.prop} (not furniture)</option>`}</select>` +
+    `<div class="form">${iconPicker({ name: 'prop' }, it.prop, 'ff', furnitureOptions(F, it.prop))}` +
     `<span>rot</span>${num('ffr', it.rot, 3)}<span></span><span></span>` +
     `<span>${it.wall ? 'wall, cell' : 'cell x, z'}</span>${num('ffx', it.cell[0], 255)}${num('ffz', it.cell[1], 255)}<span></span></div>` +
     '<div class="btns"><button id="ffapply">Apply</button></div>' +
@@ -113,7 +111,8 @@ function renderFurniture(it) {
     (it.exact ? '<p class="muted">Position computed like Room_PlacePropOnGrid: wall flag and offsets decoded for all 182 furniture props, checked against the game on 72 placements.</p>' :
       '<p class="warn">This prop is not furniture: the game has no placement object for it. Pick one from the list.</p>');
   const v = (id) => +$(id).value;
-  $('ffapply').addEventListener('click', () => edit('furniture', { i: it.index, prop: v('ffp'), rot: v('ffr'), x: v('ffx'), z: v('ffz') }));
+  bindPickers('ff', () => {});
+  $('ffapply').addEventListener('click', () => edit('furniture', { i: it.index, prop: v('ff_prop'), rot: v('ffr'), x: v('ffx'), z: v('ffz') }));
 }
 
 // ---- typed fields (tools/layout.py FIELDS, served by /api/palette): one widget per field, ids picked from lists --
@@ -122,7 +121,7 @@ function fieldInput(t, f, v, pre) {
   const P = S.palette, id = `${pre}_${f.name}`;
   const sel = (opts) => `<select id="${id}" data-f="${f.name}">${opts}</select>`;
   if (f.name === 'npc') return sel(P.npcs.map((n) => opt(n.id, `${n.id} ${n.name} (${n.model})`, v)).join(''));
-  if (f.name === 'prop') return sel(P.props.filter((p) => p.id >= f.min && p.id <= f.max).map((p) => opt(p.id, `${p.id} ${p.name}`, v)).join(''));
+  if (f.name === 'prop') return sel(P.props.filter((p) => p.id >= f.min && p.id <= f.max).map((p) => opt(p.id, `${p.id} ${p.game_name} (${p.name})`, v)).join(''));
   if (f.name === 'object') return sel(P.objects.map((o) => opt(o.id, `${o.id} ${o.name}`, v)).join(''));
   if (f.name === 'dest') return sel(S.locs.map((l) => opt(l.id, `${l.id} ${l.place}${l.nav == null ? ' (no layout)' : ''}`, v)).join(''));
   if (f.name === 'entry') return sel(entryOptions(null, v));
@@ -134,11 +133,57 @@ function entryOptions(dest, cur) {
   if (cur != null && !ids.includes(cur)) ids.push(cur);
   return ids.map((e) => opt(e, `entry ${e}${(S.palette.entry_ids[dest] ?? []).includes(e) ? '' : ' (missing!)'}`, cur)).join('');
 }
-function fieldsForm(t, vals, pre) {
+function fieldsForm(t, vals, pre, pick = false) {
   const T = S.palette.types.find((x) => x.type === t);
   if (!T) return '';
-  return `<div class="form fields" id="${pre}">` + T.fields.map((f) =>
+  return `<div class="form fields" id="${pre}">` + T.fields.map((f) => pick && (f.name === 'npc' || f.name === 'prop') ?
+    iconPicker(f, vals[f.name], pre) :
     `<span title="${f.min}..${f.max}">${f.name.replace('_', ' ')}</span>${fieldInput(t, f, vals[f.name], pre)}`).join('') + '</div>';
+}
+
+// NPC / prop picker: the in-game icons (portraits, buy-mode icons: tools/objinfo.py), name tile when there is none
+function pickerOptions(name, f) {
+  const P = S.palette;
+  return name === 'npc' ? P.npcs.map((n) => ({ ...n, label: n.name, tip: `${n.id} ${n.name} (${n.model})` })) :
+    P.props.filter((p) => p.id >= f.min && p.id <= f.max).map((p) => ({ ...p, label: p.game_name, tip: `${p.id} ${p.game_name} (${p.name})` }));
+}
+// furniture props only (+ the current id if it is not furniture), with their wall / floor kind
+function furnitureOptions(F, cur) {
+  const P = Object.fromEntries(S.palette.props.map((p) => [p.id, p]));
+  const os = F.props.map((f) => ({ ...P[f.prop], label: P[f.prop].game_name,
+    tip: `${f.prop} ${P[f.prop].game_name} (${f.name}, ${f.wall ? 'wall' : 'floor'})` }));
+  if (!F.props.some((f) => f.prop === cur)) os.push({ ...P[cur], label: P[cur].game_name, tip: `${cur} ${P[cur].game_name} (not furniture)` });
+  return os;
+}
+function iconPicker(f, v, pre, os = pickerOptions(f.name, f)) {
+  const cur = os.find((o) => o.id === v);
+  return `<div class="ipick"><div class="ihead"><span>${f.name}</span><b id="${pre}_${f.name}_lbl">${esc(cur?.tip ?? String(v))}</b>` +
+    `<input class="isearch" id="${pre}_${f.name}_q" placeholder="Search…" spellcheck="false"></div>` +
+    `<input type="hidden" id="${pre}_${f.name}" data-f="${f.name}" value="${v}">` +
+    `<div class="igrid" id="${pre}_${f.name}_grid">${os.map((o) =>
+      `<button type="button" class="icell${o.id === v ? ' on' : ''}" data-v="${o.id}" data-s="${esc(o.tip.toLowerCase())}" title="${esc(o.tip)}">` +
+      (o.icon ? `<img src="/api/icon/${f.name}/${o.id}.png" alt="" loading="lazy">` : `<span>${esc(o.label)}</span>`) +
+      `<small>${o.id}</small></button>`).join('')}</div></div>`;
+}
+function bindPickers(pre, onPick) {
+  for (const name of ['npc', 'prop']) {
+    const grid = $(`${pre}_${name}_grid`);
+    if (!grid) continue;
+    grid.querySelector('.icell.on')?.scrollIntoView({ block: 'nearest' });
+    grid.addEventListener('click', (e) => {
+      const c = e.target.closest('.icell');
+      if (!c) return;
+      grid.querySelector('.icell.on')?.classList.remove('on');
+      c.classList.add('on');
+      $(`${pre}_${name}`).value = c.dataset.v;
+      $(`${pre}_${name}_lbl`).textContent = c.title;
+      onPick();
+    });
+    $(`${pre}_${name}_q`).addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      grid.querySelectorAll('.icell').forEach((c) => { c.hidden = q !== '' && !c.dataset.s.includes(q); });
+    });
+  }
 }
 // wire the destination -> entry list after the form is in the DOM
 function bindFields(pre, vals) {
@@ -161,7 +206,7 @@ function editForm(it) {
   let h = `<div class="form"><span>x, y, z</span>${num('fx', it.x)}${num('fy', it.y)}${num('fz', it.z)}`;
   if (ent) h += `<span>angle °</span>${num('fa', (it.angle_rad * 180 / Math.PI).toFixed(1))}<span></span><span></span>`;
   h += '</div>';
-  if (!ent) h += fieldsForm(it.type, it.typed, 'tf') +
+  if (!ent) h += fieldsForm(it.type, it.typed, 'tf', true) +
     `<div class="form"><span>raw</span><input id="fraw" class="raw" value="${it.raw}" spellcheck="false"></div>`;
   h += '<div class="btns"><button id="fapply">Apply</button>';
   if (!ent) h += '<button id="fdup" title="Copy to the end of the group (no index shift)">Duplicate</button><button id="fdel" title="Del">Delete</button>';
@@ -173,7 +218,7 @@ function editForm(it) {
 
 function bindEditForm(it) {
   const v = (id) => ($(id) && $(id).value !== '' ? +$(id).value : null);
-  if (it.type !== 'entry') bindFields('tf', it.typed);
+  if (it.type !== 'entry') { bindFields('tf', it.typed); bindPickers('tf', () => {}); }
   $('fapply').addEventListener('click', () => {
     const pos = { x: v('fx'), y: v('fy'), z: v('fz') };
     if (it.type === 'entry') {
@@ -224,7 +269,7 @@ function renderPalette() {
     `<span>group</span><select id="pgroup">${groups.map((x) =>
       opt(x.key, `block ${x.b} · group ${x.g} (${x.n} items)`, PAL.group)).join('')}</select></div>` +
     `<p class="${G && (G.permanent || G.spawned_by.length) ? 'muted' : 'warn'}">${esc(hint)}</p>` +
-    fieldsForm(PAL.type, PAL.vals, 'pf') +
+    fieldsForm(PAL.type, PAL.vals, 'pf', true) +
     `<div class="btns"><button id="pplace" class="tab${S.placing ? ' on' : ''}">${S.placing ? 'Click on the map… (Esc)' : 'Place on map'}</button>` +
     '<button id="pcentre" title="At the centre of the top-down view">Add at view centre</button></div>' +
     (lim ? `<p class="muted">Variant ${S.block}: parse arena ${lim.arena} / ${P.limits.arena} bytes (8 per item), ` +
@@ -232,6 +277,7 @@ function renderPalette() {
     (PAL.type === 10 ? '<p class="assumed">Collect bit: one per timed prop (0..49 used by the game). Bits 50..63 are assumed free.</p>' : '') +
     (PAL.type === 4 ? '<p class="muted">Door: walking into the box loads the destination at that entry point. Object = door model, or box only.</p>' : '');
   bindFields('pf', PAL.vals);
+  bindPickers('pf', () => { PAL.vals = readFields('pf'); });
   $('ptype').addEventListener('change', () => { PAL.type = +$('ptype').value; PAL.vals = null; S.placing = null; renderPalette(); });
   $('pgroup').addEventListener('change', () => { PAL.group = $('pgroup').value; renderPalette(); });
   $('pf')?.addEventListener('change', () => { PAL.vals = readFields('pf'); });

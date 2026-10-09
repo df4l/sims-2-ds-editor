@@ -233,3 +233,15 @@ location (33 = none)}, bitsets [G]+0x41F8+0x218 = location open (doors check it)
 Data: 0x02132900 NPC initial records (20 bytes, status at +4), 0x02131F34 dust-enabled locations (33 bytes).
 
 Data: 0x0211FA70 default room furniture (6 rooms × 6 × {u8 prop id, u8 x, u8 z, u8 rot}); 0x02127754 room grid entries (u16[6]: 2494, 7565, 5007, 4370, 5297, 6333).
+
+| 0x0208afd0 | Info_Prop | prop id → object info record 0x02122A00 + 18·(prop + 0x3B); called by Furn_InitPlacementBase (actor +10) and ~45 others | confirmed (code + 331 names / icons) |
+| 0x0208afe8 | Info_Npc | NPC id → record 0x02122A00 + 18·(npc + 2); State0E_ShowNextLine uses its icon as the speaker portrait | confirmed (code + 56 names) |
+| 0x0208b000 | Info_ByIndex | record 0x02122A00 + 18·i (State0E_ShowNextLine: narrator / player) | confirmed (code) |
+
+Data: 0x02122A00 object info table, 18-byte records {u16 icon tiles, def, pal, u16 0, u16 text id, u16 picture ×2, u16 price?, s16 ?} (docs/formats/objinfo.md, tools/objinfo.py).
+
+| 0x020bd908 | Gfx_LoadTexPal256 | (buf, rom.bin entry, w, h, fmt): loads a 512-byte palette + w·h 8bpp texture file into a texture holder | confirmed (code + 122 textures) |
+| 0x020bbee0 | Gfx_ReplaceModelTexture | (model texture slot = actor +0x1A4, holder): replaces the model's texture with the loaded one | confirmed (code + 122 textures) |
+
+Data: prop variant texture sub-tables (u16 rom.bin entries, indexed by prop − base) 0x02117DE4…0x02117F10, read by the
+Prop_CreatePlacementObject cases (docs/formats/roomfurn.md §4b).

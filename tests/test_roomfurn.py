@@ -46,8 +46,33 @@ def test_placement_matches_game():
         assert all(abs(a - b / 4096) < 1e-3 for a, b in zip(c[:3], (gx, gy, gz))), (p, c, (gx, gy, gz))
 
 
+def test_prop_variant_textures():
+    """Colour variants: the jump-table case swaps the model texture (roomfurn.prop_texture). Every model shipped with
+    a blank (all-zero) texture gets one, except the arcade machines; every swap fits the model (nitro._swap_texture)."""
+    import struct
+    import nitro
+    from nitrogen.platforms.nds.formats import container
+    raw = lambda e: (roomfurn.ROOT / 'rom_bin' / ('dec' if (roomfurn.ROOT / 'rom_bin' / 'dec' / f'{e:04d}.bin').exists()
+                                                  else 'raw') / f'{e:04d}.bin').read_bytes()
+    tex = {p: roomfurn.prop_texture(p) for p in range(roomfurn.N_PROPS)}
+    tex = {p: t for p, t in tex.items() if t is not None}
+    assert len(tex) == 123
+    assert tex[209] == 7882 and tex[212] == 7897 and tex[150] == 2838   # clean / dirty toilet, Danish dresser
+    blank, unfit = [], []
+    for p in range(roomfurn.N_PROPS):
+        cont = container.read_container(raw(struct.unpack_from('<H', roomfurn.arm9(), roomfurn.PROP_MODELS + 8 * p + 4
+                                                                - roomfurn.ARM9_BASE)[0]))
+        if any(not any(t.data1) for t in cont.textures) and p not in tex:
+            blank.append(p)
+        if p in tex and not nitro._swap_texture(cont, raw(tex[p])):
+            unfit.append(p)
+    assert blank == list(range(164, 177))   # arcade screens: drawn by other code
+    assert unfit == [104]                   # PlasmaTV: 32x64 screen strip, not a colour variant
+
+
 if __name__ == '__main__':
     test_every_furniture_prop_has_placement()
     test_measured_defaults()
     test_placement_matches_game()
+    test_prop_variant_textures()
     print('OK')

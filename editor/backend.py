@@ -2,7 +2,8 @@
 
   location_json(loc, lang)  location table record + layout (entry points, blocks, items, scripts)
   bsp_json(loc)             collision brushes (tools/bsp.py to_obj, parsed back into vertices + faces)
-  model_glb(entry)          BMD0 rom.bin entry converted to GLB by nitro.bmd0_to_glb (cached in build/editor_cache/models)
+  model_glb(entry, tex)     BMD0 rom.bin entry converted to GLB by nitro.bmd0_to_glb, optional prop variant texture
+                            swapped in (cached in build/editor_cache/models)
 Layout and BSP are read through editor/project.py: the saved edit if there is one, else the original entry.
 """
 import hashlib
@@ -21,6 +22,7 @@ import project  # noqa: E402
 import roomfurn  # noqa: E402
 import layscript  # noqa: E402
 import nitro  # noqa: E402
+import objinfo  # noqa: E402
 import s2data  # noqa: E402
 import text  # noqa: E402
 from locations import read_table, NONE, PLACES  # noqa: E402
@@ -55,13 +57,39 @@ def locations_json():
 def _item_json(it):
     m = layout.model_of(it)
     f = it.fields()
+    prop = f.get('id') if it.type == 2 else f.get('prop') if it.type == 10 else None
     return {'type': it.type, 'type_name': layout.ITEM_NAME.get(it.type, str(it.type)),
             'x': it.x, 'y': it.y, 'z': it.z, 'angle_deg': f.get('angle_deg'), 'fields': f, 'typed': it.typed(),
-            'model': m, 'model_name': nitro.model_name(m) if m is not None else None, 'raw': it.raw.hex()}
+            'model': m, 'model_name': nitro.model_name(m) if m is not None else None,
+            'model_tex': roomfurn.prop_texture(prop) if prop is not None else None, 'raw': it.raw.hex()}
 
 
 def _model_entry(tbl, i):
     return struct.unpack_from('<H', roomfurn.arm9(), tbl + 8 * i + 4 - roomfurn.ARM9_BASE)[0]
+
+
+def _info(kind, i):
+    return objinfo.npc(i) if kind == 'npc' else objinfo.prop(i) if 0 <= i < objinfo.N_PROPS else None
+
+
+def icon_png(kind: str, i: int) -> bytes | None:
+    """In-game icon (first sprite frame) of an NPC or prop, PNG, cached by icon sprite entry. None if it has none."""
+    r = _info(kind, i)
+    if r is None or not r['icon']:
+        return None
+    path = CACHE / 'icons' / f'{r["tiles"]:04d}.png'
+    if not path.exists():
+        with _lock:
+            im = objinfo.render_icon(r)
+        if im is None:
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        im.save(path)
+    return path.read_bytes()
+
+
+def _has_icon(kind, i):
+    return icon_png(kind, i) is not None
 
 
 _palette = {}
@@ -75,9 +103,11 @@ def palette_json(lang='en'):
             'types': [{'type': t, 'name': layout.ITEM_NAME[t], 'size': layout.ITEM_SIZE[t],
                        'fields': [{'name': n, 'min': lo, 'max': hi} for n, _, _, lo, hi, _ in spec],
                        'template': layout.new_item(t).typed()} for t, spec in layout.FIELDS.items()],
-            'npcs': [{'id': i, 'name': layscript.npc_name(i, lang), 'model': nitro.model_name(_model_entry(layout.NPC_MODELS, i))}
-                     for i in range(layout.N_NPCS)],
-            'props': [{'id': i, 'name': nitro.model_name(_model_entry(layout.PROP_MODELS, i))} for i in range(layout.N_PROPS)],
+            'npcs': [{'id': i, 'name': layscript.npc_name(i, lang), 'model': nitro.model_name(_model_entry(layout.NPC_MODELS, i)),
+                      'icon': _has_icon('npc', i)} for i in range(layout.N_NPCS)],
+            'props': [{'id': i, 'name': nitro.model_name(_model_entry(layout.PROP_MODELS, i)),
+                       'game_name': text.text(objinfo.prop(i)['text'], lang), 'icon': _has_icon('prop', i)}
+                      for i in range(layout.N_PROPS)],
             'objects': [{'id': i, 'name': nitro.model_name(_model_entry(layout.OBJECT_MODELS, i))}
                         for i in range(layout.N_OBJECTS)] + [{'id': layout.N_OBJECTS, 'name': '(box only)'}],
             'limits': {'arena': layout.ARENA, 'waypoints': layout.MAX_WAYPOINTS}}
@@ -145,7 +175,8 @@ def furniture_json(loc: int, slot: int):
                              'wall': bool(it['wall']), 'exact': it['exact'], 'placed': it['pos'] is not None,
                              'x': pos[0], 'y': pos[1], 'z': pos[2], 'angle_rad': it['angle'],
                              'along': (('z' if g.wall(it['x'])[1] & 1 else 'x') if it['wall'] and it['pos'] else None),
-                             'model': m, 'model_name': nitro.model_name(m)})
+                             'model': m, 'model_name': nitro.model_name(m),
+                             'model_tex': roomfurn.prop_texture(it['prop'])})
     out['props'] = furniture_props()
     return out
 
@@ -198,16 +229,17 @@ def bsp_json(loc: int):
     return data
 
 
-def model_glb(entry: int) -> bytes | None:
-    """GLB of a BMD0 entry (nitro.bmd0_to_glb: nitrogen geometry, NNS UVs/wrap; bind pose, no animations)."""
-    path = CACHE / 'models' / f'{entry:04d}.glb'
+def model_glb(entry: int, tex: int = None) -> bytes | None:
+    """GLB of a BMD0 entry (nitro.bmd0_to_glb: nitrogen geometry, NNS UVs/wrap; bind pose, no animations).
+    tex: rom.bin entry of a prop variant texture to swap in (roomfurn.prop_texture)."""
+    path = CACHE / 'models' / (f'{entry:04d}.glb' if tex is None else f'{entry:04d}_t{tex:04d}.glb')
     if path.exists():
         return path.read_bytes()
     d = db()[entry].data
     if d[:4] != b'BMD0':
         return None
     with _lock:
-        glb = nitro.bmd0_to_glb(d)
+        glb = nitro.bmd0_to_glb(d, None if tex is None else db()[tex].data)
     if glb is None:
         return None
     path.parent.mkdir(parents=True, exist_ok=True)

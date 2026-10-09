@@ -114,7 +114,13 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
-- Latest progress (2026-10-09): "add item" palette (all 10 constructed types; named NPC/prop/object lists; door
+- Fix (2026-10-09, latest): colour-variant props (dirty toilets, couch colours…) showed black. Their shared BMD0 has a blank
+  texture. The game swaps in a per-prop texture from a table in the Prop_CreatePlacementObject case
+  (roomfurn.prop_texture, docs/formats/roomfurn.md §4b); the editor now does the same. Arcade screens 164–176 are still black.
+- Latest progress (2026-10-09, later): NPC / prop pickers show the game's own icons (portraits, buy-mode icons)
+  and in-game names. Both come from the arm9 object info table 0x02122A00 (Info_Npc / Info_Prop, docs/formats/objinfo.md,
+  tools/objinfo.py), used in the palette, the item edit form and the room furniture form.
+- Earlier (2026-10-09): "add item" palette (all 10 constructed types; named NPC/prop/object lists; door
   destination + entry; target group with a "spawned by" hint; click to place) and typed field editors
   (`layout.FIELDS`, from Nav_SpawnEntity). Checks: door entry exists, trigger group/script, waypoint links, unique orb
   collect bit. Two runtime limits, CONFIRMED by code and checked on every save: Map_LoadNav arena 0x800 bytes

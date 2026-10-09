@@ -8,7 +8,8 @@ API (JSON unless noted):
   GET /api/location/<id>?lang=en       layout: entry points, blocks (groups of items, scripts as text)
   GET /api/palette?lang=en             item types (typed fields, templates), NPC / prop / object ids, entry ids
   GET /api/bsp/<id>                    collision brushes (vertices + faces, layout units)
-  GET /api/model/<entry>.glb           BMD0 entry as GLB (model/gltf-binary)
+  GET /api/model/<entry>.glb[?tex=N]   BMD0 entry as GLB (model/gltf-binary), N = prop variant texture entry
+  GET /api/icon/<npc|prop>/<id>.png    in-game icon of an NPC (portrait) or prop (tools/objinfo.py)
   GET /api/edits                       saved edits [kind, entry], undo depth
   POST /api/edit {op, loc, ...}        op: item (b, g, i, x?, y?, z?, angle_deg?, raw?, fields?),
                                        add (b, g, type, x, y, z, fields?), duplicate (b, g, i),
@@ -67,8 +68,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, backend.bsp_json(int(m[1])))
             if p == '/api/edits':
                 return self._send(200, json.dumps({'edits': project.edited(), 'undo': len(project._undo)}))
+            if m := re.fullmatch(r'/api/icon/(npc|prop)/(\d+)\.png', p):
+                png = backend.icon_png(m[1], int(m[2]))
+                return self._send(200, png, 'image/png') if png else self._send(404, '{"error":"no icon"}')
             if m := re.fullmatch(r'/api/model/(\d+)\.glb', p):
-                glb = backend.model_glb(int(m[1]))
+                tex = q.get('tex', [None])[0]
+                glb = backend.model_glb(int(m[1]), None if tex is None else int(tex))
                 return self._send(200, glb, 'model/gltf-binary') if glb else self._send(404, '{"error":"no model"}')
             f = (STATIC / ('index.html' if p == '/' else p.lstrip('/'))).resolve()
             if STATIC in f.parents and f.is_file():

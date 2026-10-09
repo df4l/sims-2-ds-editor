@@ -806,3 +806,53 @@ text or bg_composite.
   - the statue is visible, and absent on the reference ROM with the same steps (`yeti_added.png` / `yeti_original.png`);
   - the door box is in RAM (half-size 5/15/5, kind 0x12, dest 6, entry 0);
   - the Sim walked into it and location 6 loaded (`door_to_loc6.png`).
+
+## 2026-10-09 — Object info table: in-game names and icons (editor icon pickers)
+- **Goal**: the user asked for the game's icons in the Add item palette instead of the name lists.
+- **Hypothesis 1 (data)**: contact sheets of the 1192 sprites (first frame) show NPC portraits (184, 513, 561…)
+  and furniture icons (beds 691–740, couches 2255–2346…). In rom.bin each furniture model is followed by one bundle
+  per colour variant: `[img8_pal256][sprite triplet][bg_composite]`.
+- **Hypothesis 2 (table)**: a search for u16 2255 (Camel Couch icon) in arm9 finds 18-byte records at 0x02123726:
+  `{2255, 2256, 2257, 0, 591, 2258, 2258, 75, 0}`, with text 591 = "Camel Couch". Walking the table gives NPC names,
+  then props.
+- **Code, CONFIRMED**: the only references to 0x02122A00 are 3 accessors (renamed in Ghidra):
+  - Info_Prop 0x0208afd0 = base + 18·(prop + 0x3B), called by Furn_InitPlacementBase with the actor's prop id;
+  - Info_Npc 0x0208afe8 = base + 18·(npc + 2), called by State0E_ShowNextLine with the speaker id, so the icon is the portrait;
+  - Info_ByIndex 0x0208b000.
+- **Data, CONFIRMED**:
+  - NPCs 0..55 have text id 0x143 + npc, the known NPC names;
+  - the 6 default room props give White Fridge, Black Mahogany Bed, Black Couch, White Shower, Off-White Toilet,
+    Porcelain Sink;
+  - `objinfo.py sheet`: all 329 own icons decode, and each one matches its name on visual check. The exception is
+    prop 253 Cellphone (entry 1951, not a plain sprite). Icon entry 6180 is a shared placeholder, treated as no icon.
+- **Assumed**: +0x0E is the price, +0x0A is the buy / inventory picture. +0x10 is unknown.
+- **Editor**:
+  - icon grid + search for the npc / prop fields (palette, item edit form, room furniture form);
+  - `/api/icon/<npc|prop>/<id>.png`;
+  - in-game names in the prop lists.
+- **UI test**: headless Edge (Playwright, temp venv outside the project). It covered:
+  - the prop grid, NPC portraits and furniture form are shown;
+  - searching "couch" then clicking sets the field to prop 130 "Citron Green Couch";
+  - no JS error (only a favicon 404).
+- **Tests**: `tests/test_objinfo.py` (names, accessor offsets, icon decoding); all 8 test scripts pass.
+
+## 2026-10-09 — Prop colour variants rendered black in the editor (variant textures)
+
+- **Symptom (user)**: adding prop 212 "Toilet (Dirty)" shows an all-black model.
+- **Cause**: BMD0 7881 (shared by toilets 209–220) has a 32×32 8bpp texture `CleanToilet` whose texels and palette are
+  all zero. 68 prop ids use such a blank model (beds, couches, dressers, showers, toilets, sinks, arcades).
+- **Hypothesis 1 (data)**: the variant's texture is the `img8_pal256` entry just before its icon bundle (icon tiles − 1).
+  This holds for the toilets but it is not proof, and the code later shows it is wrong for 126–127 and 150–159.
+- **Code, CONFIRMED**: a search for u16 7897 in arm9 finds a u16 table at 0x02117F10. Its literal-pool reference sits
+  inside the Prop_CreatePlacementObject jump table, in code Ghidra had not disassembled (0x02013500…, now disassembled).
+  The case does `entry = TABLE[prop − BASE]`, then Gfx_LoadTexPal256 0x020bd908, then
+  Gfx_ReplaceModelTexture 0x020bbee0 (actor +0x1A4). Both functions were renamed.
+- **File layout, CONFIRMED (data)**: palette (512 bytes) first, then the texels. Decoding entry 7897 both ways, only
+  this order gives an image (a toilet with green stains).
+- **Tool**: `roomfurn.prop_texture(prop)` decodes each case straight from arm9 (pc-relative literals including negative
+  offsets, sub #base, ldrh). It finds 123 props. `nitro.bmd0_to_glb(d, tex)` swaps the format-4 texture of the same size
+  and its bound palettes.
+- **Editor**: `model_tex` in the item / furniture JSON, `/api/model/<e>.glb?tex=<t>` (cache `<e>_t<t>.glb`).
+- **Check**: contact sheet of the 122 swapped textures, all plausible. Through the server, 7881 + 7897 gives the dirty
+  texture, and 68 objects of the 33 locations now carry `model_tex`. All 8 test scripts pass.
+- **Not covered**: arcade screens 164–176 (no texture call in their case) and PlasmaTV 104 (a 32×64 strip, model kept as is).

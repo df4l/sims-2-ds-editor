@@ -74,3 +74,13 @@ Assumed, not verified:
 - Checked in the emulator: a new prop model and a new door to location 6 added to location 5 both work in game
   (journal 2026-10-09).
 - Assumed, not verified: bits 50..63 are free collect bits.
+
+## Milestone 3, part 2: in-game icons in the pickers (2026-10-09)
+- The NPC and prop fields are now **icon grids** with the game's own icons: conversation portraits for NPCs and
+  buy-mode / inventory icons for props. They're used in the Add item palette, the item edit form and the hotel room
+  furniture form. A search box filters by id, in-game name or model name. The tooltip shows `id name (model)`.
+- Source: the arm9 object info table 0x02122A00 (docs/formats/objinfo.md, `tools/objinfo.py`), which also gives the
+  in-game names ("Camel Couch" instead of the model name `CouchBasic`).
+- Props and NPCs without an icon of their own (effects, unused props, 3 NPCs, Cellphone) show their name instead.
+- Icons are rendered once into `build/editor_cache/icons/` (~25 s the first time the palette loads).
+- Door models (type 4 `object`) have no record in that table and stay a list.

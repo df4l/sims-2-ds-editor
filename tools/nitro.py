@@ -98,8 +98,24 @@ def _wrap(param: int, axis: int) -> str:
     return 'mirror' if param >> (18 + axis) & 1 else 'repeat'
 
 
-def bmd0_to_glb(d: bytes) -> bytes | None:
-    """First model of a BMD0 (with its own TEX0) as an unlit, nearest-filtered GLB, bind pose."""
+def _swap_texture(cont, tex: bytes) -> bool:
+    """Put a prop variant texture (roomfurn.prop_texture: 512-byte palette + 8bpp texels) on the model's 256-colour
+    texture of the same size, like Gfx_ReplaceModelTexture 0x020bbee0 does in game. False (model unchanged) if there is none:
+    PlasmaTV (prop 104) loads a 32x64 screen strip, not a variant."""
+    for t in cont.textures:
+        if t.params.format == 4 and len(tex) == 512 + t.params.width * t.params.height:
+            t.data1 = tex[512:]
+            pals = {m.palette_name for mdl in cont.models for m in mdl.materials if m.texture_name == t.name}
+            for p in cont.palettes:
+                if p.name in pals:
+                    p.pal_block, p.off = tex[:512], 0
+            return True
+    return False
+
+
+def bmd0_to_glb(d: bytes, tex: bytes = None) -> bytes | None:
+    """First model of a BMD0 (with its own TEX0) as an unlit, nearest-filtered GLB, bind pose.
+    tex: optional variant texture swapped in first (see _swap_texture)."""
     import dataclasses
     from nitrogen.core.export.gltf import scene_to_glb
     from nitrogen.platforms.nds.formats import container, model as nmodel
@@ -120,6 +136,8 @@ def bmd0_to_glb(d: bytes) -> bytes | None:
         nmodel._read_material = read
     if not cont.models:
         return None
+    if tex is not None:
+        _swap_texture(cont, tex)
     mdl = cont.models[0]
     textures = {t.name: t for t in cont.textures}
     palettes = {p.name: p for p in cont.palettes}

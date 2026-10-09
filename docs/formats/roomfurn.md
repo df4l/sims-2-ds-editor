@@ -127,6 +127,39 @@ lists parse to their exact size. Only the meaning of byte 0 is unknown.
   props on several walls, the 4 node kinds, multi-frame node files and props with several anim entries. All 36 match within
   0.001 (tests/test_roomfurn.py).
 
+## 4b. Colour variant textures — CONFIRMED (code + 122 textures checked visually)
+
+`tools/roomfurn.py prop_texture(prop)` → rom.bin entry or None. Editor: the item and furniture JSON carry `model_tex`,
+and `/api/model/<bmd0>.glb?tex=<entry>` swaps it in (`nitro.bmd0_to_glb(d, tex)`).
+
+Colour variants share one BMD0 (toilets 209–220 → entry 7881). Its 8bpp texture is either the default colour or **blank**:
+texels and palette are all zero, so the model renders black. That is the case for 68 prop ids. The prop's
+Prop_CreatePlacementObject case picks the real texture:
+```
+ldrh r1,[r5,#0xa]          ; prop id (actor +0xA)
+ldr  r0,=TABLE             ; u16 table in arm9, one sub-table per model family
+sub  r1,r1,#BASE           ; first prop id of the family
+ldrh r1,[r0,r1 lsl 1]      ; rom.bin entry
+Gfx_LoadTexPal256 0x020bd908(buf, entry, w, h, 4)
+Gfx_ReplaceModelTexture 0x020bbee0(actor + 0x1A4, buf)
+```
+- The texture entry (`img8_pal256` in the catalogue) is a **512-byte palette, then w·h 8bpp texels**. The palette-first
+  order was checked by decoding entry 7897 both ways (only palette-first gives an image).
+- The decoder follows the jump table 0x02011E2C, then the case's branches up to the call to 0x020bd908. It finds
+  **123 props**: fridges 83–91, prop 104, beds 106–127, couches 128–143, chairs 144–148, dressers 150–159,
+  showers 185–208, toilets 209–232, sinks 233–244. Some sub-tables: 0x02117E54 (fridges, base 83),
+  0x02117E68 (dressers, base 150), 0x02117F10 (toilets, base 209).
+- The swap replaces the model's format-4 (256-colour) texture of the same size, and the palettes its materials bind to it.
+  Showers keep their `ShowerWater` (format 1) texture.
+- The "icon tiles − 1" guess (the `img8_pal256` just before the icon bundle) is **wrong** for 126–127 and 150–159.
+  Only the code table is used.
+- Exceptions: prop **104 PlasmaTV** loads entry 8249 directly (`ldr r1,=8249`). That is a 32×64 strip that does not fit
+  its 32×32 textures (probably screen frames), so the editor keeps the model's own textures. The **arcade machines
+  164–176** have a blank `ArcadeScreen` texture but no such call: their screen is drawn by other code, so the editor shows it black.
+- Visual check (2026-10-09): the 122 swapped textures as a contact sheet. Each family shows its colours, and the
+  toilets alternate clean / dirty. Test: `tests/test_roomfurn.py test_prop_variant_textures`.
+
 ## 5. Open points
+- the arcade screen texture (164–176) and the PlasmaTV strip 8249 (104);
 - fields 0x10, 0x16 and the second cell layer of the grid file; bytes 6–7 of a wall slot; byte 0 of a node file;
 - the 7 u32 per room in the game state.
