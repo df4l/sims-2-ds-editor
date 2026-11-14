@@ -114,6 +114,13 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
+- Godot rewrite (2026-11-14, branch `godot-editor`, folder `godot/`): user rejected the web UI and the Python deps.
+  Standalone Godot 4.7 GDScript editor: start screen picks a `.nds`, everything is read from it (NitroFS, BLZ ARM9,
+  rom.bin, layouts, BSP, BMD0 -> mesh, icons, text), edits autosaved in user://projects/<rom sha1>/, Export ROM writes
+  a new `.nds` (own relayout, no ndstool). Feature parity with milestones 1-3. CONFIRMED: round-trips (32 layouts,
+  32 BSP, rom.bin, unchanged ROM byte-identical), 65/65 scene models, furniture positions = tools/roomfurn.py,
+  edits -> export -> reopen on a plain and a BLZ-compressed-ARM9 ROM, exported ROM boots in melonDS (build/godot_test/).
+  See godot/README.md. The Python editor in editor/ is kept for now.
 - Fix (2026-10-09, latest): colour-variant props (dirty toilets, couch colours…) showed black. Their shared BMD0 has a blank
   texture. The game swaps in a per-prop texture from a table in the Prop_CreatePlacementObject case
   (roomfurn.prop_texture, docs/formats/roomfurn.md §4b); the editor now does the same. Arcade screens 164–176 are still black.

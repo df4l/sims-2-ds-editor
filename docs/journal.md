@@ -856,3 +856,20 @@ text or bg_composite.
 - **Check**: contact sheet of the 122 swapped textures, all plausible. Through the server, 7881 + 7897 gives the dirty
   texture, and 68 objects of the 33 locations now carry `model_tex`. All 8 test scripts pass.
 - **Not covered**: arcade screens 164–176 (no texture call in their case) and PlasmaTV 104 (a 32×64 strip, model kept as is).
+
+
+## 2026-11-14 — Editor rewritten in Godot (branch godot-editor)
+
+User request: no web UI, no Python dependencies, user picks the ROM at runtime, standalone Godot project.
+- Ported to GDScript (godot/scripts/core): .nds reader + rebuild (regions kept in order, growing ones push the rest by
+  multiples of 0x200, header CRC recomputed, secure-area CRC left as ndstool does), BLZ decompression, rom.bin and its
+  blob codecs (type 0 raw copy accepted only as a single blob filling the entry), layout + scripts, BSP (iterative,
+  doubles), room furniture, BMD0 -> ArrayMesh (nitrogen port + Maya UV / wrap fixes, winding reversed for Godot), sprites.
+- Tests (godot/tests): test_core — rom.bin rebuild identical, unchanged ROM rebuild byte-identical, 32/32 layouts and
+  32/32 BSP byte-identical, 65/65 scene models build, BLZ output = ndspy on arm9.bin, furniture positions = Python.
+  test_edits — add prop / door, refused door to a missing entry, duplicate, delete, move, entry angle, collision box,
+  furniture edit + refused non-furniture prop + undo, export, reopen: all edits present, header CRC OK. Passed on a
+  plain-ARM9 ROM and on a ROM whose ARM9 is BLZ-compressed (like the retail one). Export writes the decompressed ARM9
+  with compressed_static_end = 0 only when furniture is edited.
+- Emulator: the exported BLZ-based test ROM boots and reaches the town intro (build/godot_test/boot.png).
+- Not done: in-game check of each edit from the Godot export (same bytes as the Python pipeline produced, checked by reopening).

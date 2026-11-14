@@ -1,0 +1,8 @@
+# Godot cache / exports
+.godot/
+/export/
+*.tmp
+# Godot engine binaries (download them, see README)
+Godot_*.exe
+Godot_*
+!Godot_*.md

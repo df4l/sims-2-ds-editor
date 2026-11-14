@@ -1,0 +1,29 @@
+; Engine configuration file.
+; Sims 2 DS map editor (standalone Godot rewrite).
+
+config_version=5
+
+[application]
+
+config/name="Sims 2 DS Map Editor"
+config/description="Map editor for The Sims 2 (Nintendo DS): open a ROM, edit locations, export a new ROM."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+run/low_processor_mode=true
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/subwindows/embed_subwindows=false
+
+[gui]
+
+theme/default_theme_scale=1.0
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+anti_aliasing/quality/msaa_3d=2
