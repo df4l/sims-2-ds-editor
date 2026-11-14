@@ -7,6 +7,8 @@ the editor opens a `.nds` file you pick, reads everything from it, and exports a
 
 - Windows: put `Godot_v4.7.x-stable_win64.exe` (standard build, not .NET) in this folder and double-click
   `Lancer l'editeur.bat`. Or `Godot_v4.7.2-stable_win64.exe --path <this folder>`.
+- Linux: put `Godot_v4.7.x-stable_linux.x86_64` in this folder (or have `godot` / `godot4` in the PATH) and run
+  `sh lancer_editeur.sh` (or `./lancer_editeur.sh` once made executable).
 - Any OS: open this folder with Godot 4.7 and press F5, or `godot --path <this folder>`.
 - A ROM path can be given: `godot --path . -- path/to/sims2.nds`.
 - Single executable: install the Godot export templates (Editor > Manage Export Templates), then
