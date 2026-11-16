@@ -1,7 +1,7 @@
 class_name EditProject
 extends RefCounted
 ## Edits on top of the opened ROM: layout / BSP rom.bin entries and the default hotel room furniture (arm9 table),
-## with undo, autosave and ROM export. Port of editor/project.py.
+## with undo, autosave and ROM export. Port of the former Python editor (editor/project.py, removed).
 ##
 ## Edits are saved as soon as they are made under user://projects/<sha1 of the ROM>/ (one file per edited entry,
 ## decompressed content), so reopening the same ROM brings them back. The ROM file itself is never written:

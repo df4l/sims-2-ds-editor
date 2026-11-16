@@ -54,7 +54,7 @@ The project moves forward in phases. Do not move on to the next phase until the 
 /docs/ghidra.md    Table of identified functions (address, name, role)
 /docs/journal.md   Log of hypotheses, tests and results
 /build/            Modified ROMs and rebuilt archives
-/editor/           Map editor code (phase 5)
+/godot/            Map editor (phase 5, Godot 4.7 GDScript, the only editor)
 ```
 
 ## Working rules
@@ -114,13 +114,15 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
-- Godot rewrite (2026-11-14, branch `godot-editor`, folder `godot/`): user rejected the web UI and the Python deps.
+- 2026-11-16: the Godot editor is now the ONLY editor. `godot-editor` merged into main, the Python/web editor `editor/`
+  deleted (its history is in git). New editor features go in GDScript only; `tools/` stays as the Python RE lab.
+- Godot rewrite (2026-11-14, folder `godot/`): user rejected the web UI and the Python deps.
   Standalone Godot 4.7 GDScript editor: start screen picks a `.nds`, everything is read from it (NitroFS, BLZ ARM9,
   rom.bin, layouts, BSP, BMD0 -> mesh, icons, text), edits autosaved in user://projects/<rom sha1>/, Export ROM writes
   a new `.nds` (own relayout, no ndstool). Feature parity with milestones 1-3. CONFIRMED: round-trips (32 layouts,
   32 BSP, rom.bin, unchanged ROM byte-identical), 65/65 scene models, furniture positions = tools/roomfurn.py,
   edits -> export -> reopen on a plain and a BLZ-compressed-ARM9 ROM, exported ROM boots in melonDS (build/godot_test/).
-  See godot/README.md. The Python editor in editor/ is kept for now.
+  See godot/README.md.
 - Fix (2026-10-09, latest): colour-variant props (dirty toilets, couch colours…) showed black. Their shared BMD0 has a blank
   texture. The game swaps in a per-prop texture from a table in the Prop_CreatePlacementObject case
   (roomfurn.prop_texture, docs/formats/roomfurn.md §4b); the editor now does the same. Arcade screens 164–176 are still black.
@@ -146,7 +148,7 @@ Code-driven approach:
   frame visible, Sim stops at the new box z −38.17 against −46.86 at the deleted pedestal; build/editor_rom_test/).
   Earlier (2026-10-06): opcodes 82 (8 still assumed), BSP edits, text edit + Huffman rebuild, milestone 1 viewer,
   texture fix (tools/nitro.py bmd0_to_glb).
-- Editor technology CHOSEN (2026-10-06, user: "most economical, reuse our tools scripts"): Python backend
+- (Superseded by the Godot editor) Editor technology chosen (2026-10-06, user: "most economical, reuse our tools scripts"): Python backend
   (stdlib `http.server`) importing `tools/*.py` directly + browser UI (plain HTML/JS, vendored three.js) for the
   2D/3D views; 3D models via nitrogen BMD0 → GLB (offline cache). No new GUI framework, runs the same on Windows and Linux.
 - Phase 5 milestone 1 DONE (read-only editor, `python editor/server.py`, see editor/README.md): 33/33 locations,
@@ -166,4 +168,4 @@ Code-driven approach:
 - Location of the original `.nds` file (if kept):
 - ROM version / region and game code (e.g. `ASIP`, `ASIE`…): `ASJP` (Europe), ROM version 0x00
 - System: Windows (Claude Code, Ghidra) + WSL2 Ubuntu (MelonMCP only)
-- Preferred language / framework for the editor: Python (reuse tools/) + local web UI in the browser
+- Preferred language / framework for the editor: Godot 4.7, GDScript only (standalone, reads the .nds directly)

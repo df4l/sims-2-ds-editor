@@ -22,7 +22,7 @@ The Godot binaries are not committed (see `.gitignore`).
 1. Start screen: **Open a ROM** (or drop a `.nds` on the window). Recent ROMs are listed.
    Made on the European ROM `ASJP` v0x00: other versions open with a warning (data tables are at fixed ARM9 addresses).
 2. Pick a location and a variant (block 0 + one variant block, as the game loads them). Top-down or 3D view.
-3. Edit: same features as the old web editor (milestones 1–3):
+3. Edit: same features as the former web editor (milestones 1–3):
    - items: select (view or list), drag in the top-down view, typed fields with in-game icons/names, raw record,
      duplicate, delete (Del) with script reference renumbering;
    - entry points: move, angle;
@@ -49,7 +49,7 @@ so reopening the same ROM restores them.
 | `scripts/core/roomfurn.gd` | hotel room furniture placement, prop variant textures (`roomfurn.py`) |
 | `scripts/core/nsbmd.gd` | BMD0 → Godot mesh + textures (nitrogen + `nitro.py` UV fixes) |
 | `scripts/core/sprite.gd` | icon sprites (`s2sprite.py`) |
-| `scripts/core/project.gd` | edits, undo, autosave, export (`editor/project.py`) |
+| `scripts/core/project.gd` | edits, undo, autosave, export (former Python editor) |
 | `scripts/ui/*` | start screen, panels, top-down and 3D views |
 
 The formats are documented in `../docs/formats/`.
