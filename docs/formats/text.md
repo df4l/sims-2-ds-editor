@@ -1,6 +1,7 @@
 # Text banks and dialogue tables — phase 3
 
-Tool: `tools/text.py` (`verify`, `dump [lang]` → `rom_bin/text/<lang>.txt`, `get <id> [lang]`,
+Editor: Godot `godot/scripts/core/text_bank.gd` (same encoder and tree rebuild, output byte-identical to
+`text.py edit`), Text tab of the editor. Python lab tool: `tools/text.py` (`verify`, `dump [lang]` → `rom_bin/text/<lang>.txt`, `get <id> [lang]`,
 `edit out.bin [--lang xx] <id> <text> ...` → a new bank with replaced strings; `from_str` / `set_string` in Python).
 Dialogue / message tables: `tools/layscript.py` (`conversation()`, `message()`, `npc_name()`).
 Tests: `tests/test_text.py`.
@@ -64,6 +65,8 @@ Other codes: 0x7B ©, 0x7D ¡, 0x7E ¿, 0xB5 °, 0xB8 ®. All CONFIRMED by words
 like ¿ À É Î Õ Ü ñ ç ß ° Ä Ö â ê î ô û æ å è é ï ö à — the English font has them.
 ASSUMED: 0xB9 non-breaking space (fr before "?", "Drahtlos DS").
 After mapping, no unknown code remains in the 5 European banks.
+String length: `Txt_GetString` decodes into a 0x400-byte buffer, so the editor refuses strings over 0x3FF bytes
+(limit from the buffer size, not tested in game).
 
 ## 4. Names and dialogue tables (arm9)
 - **NPC names**: text `0x143 + npc id` (FUN_02082810 with the NPC record). CONFIRMED: Jebediah S. Jerky = 22,

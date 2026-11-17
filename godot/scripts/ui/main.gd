@@ -59,8 +59,17 @@ var tabs: TabContainer
 var details: VBoxContainer
 var palette: VBoxContainer
 var scripts_text: TextEdit
+var text_search: LineEdit
+var text_only_edited: CheckBox
+var text_list: ItemList
+var text_edit: TextEdit
+var text_info: Label
+var text_id := -1
+var _text_sig := []
 var open_dlg: FileDialog
 var save_dlg: FileDialog
+var save_kind := "nds"      # what save_dlg writes: "nds" or "bps"
+var emu_dlg: FileDialog
 var msg_dlg: AcceptDialog
 var confirm_dlg: ConfirmationDialog
 var _confirm_cb := Callable()
@@ -97,6 +106,11 @@ func _debug_shot(out: String, args: PackedStringArray) -> void:
 			select(a.trim_prefix("--sel="))
 		if a.begins_with("--tab="):
 			tabs.current_tab = a.trim_prefix("--tab=").to_int()
+		if a.begins_with("--text="):
+			text_search.text = a.trim_prefix("--text=")
+			_refresh_text_list(true)
+			if text_list.item_count:
+				_select_text(text_list.get_item_metadata(0))
 	for _i in 240:
 		await get_tree().process_frame
 	get_viewport().get_texture().get_image().save_png(out)
@@ -129,6 +143,16 @@ func _build_dialogs() -> void:
 	save_dlg.title = "Export the edited ROM"
 	save_dlg.file_selected.connect(_export_to)
 	add_child(save_dlg)
+	emu_dlg = FileDialog.new()
+	emu_dlg.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	emu_dlg.access = FileDialog.ACCESS_FILESYSTEM
+	emu_dlg.use_native_dialog = true
+	emu_dlg.title = "Choose the emulator program (melonDS…)"
+	emu_dlg.file_selected.connect(func(path):
+		_set_setting("emulator", path)
+		if proj != null:
+			_test_in_emulator())
+	add_child(emu_dlg)
 	msg_dlg = AcceptDialog.new()
 	msg_dlg.dialog_autowrap = true
 	msg_dlg.min_size = Vector2i(460, 0)
@@ -281,6 +305,9 @@ func _build_editor() -> void:
 	var pm := file.get_popup()
 	pm.add_item("Open ROM…", 0)
 	pm.add_item("Export edited ROM…", 1)
+	pm.add_item("Export as BPS patch…", 4)
+	pm.add_item("Test in emulator (F5)", 5)
+	pm.add_item("Choose emulator…", 6)
 	pm.add_separator()
 	pm.add_item("Discard every edit…", 2)
 	pm.add_item("Close ROM", 3)
@@ -326,6 +353,7 @@ func _build_editor() -> void:
 	top.add_child(undo_btn)
 	top.add_child(W.button("Revert location", _revert_location, "Drop every edit of this location's layout, collision and room furniture"))
 	top.add_child(W.button("Export ROM…", _export_dialog, "Write a new .nds with every edit"))
+	top.add_child(W.button("Test ▶", _test_in_emulator, "Export to a temporary ROM and open it in the emulator (F5)"))
 	edited_lbl = W.label("", W.MUTED, false)
 	top.add_child(edited_lbl)
 
@@ -372,6 +400,7 @@ func _build_editor() -> void:
 	scripts_text.editable = false
 	scripts_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	tabs.add_child(scripts_text)
+	_build_text_tab()
 
 	var bottom := MarginContainer.new()
 	bottom.add_theme_constant_override("margin_left", 8)
@@ -380,6 +409,124 @@ func _build_editor() -> void:
 	bottom.add_child(status_lbl)
 	editor.add_child(bottom)
 	set_view("2d")
+
+
+func _build_text_tab() -> void:
+	var m := MarginContainer.new()
+	m.name = "Text"
+	for s in ["left", "right", "top", "bottom"]:
+		m.add_theme_constant_override("margin_" + s, 8)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	m.add_child(v)
+	text_search = LineEdit.new()
+	text_search.placeholder_text = "Search text, or an id (0x49f)"
+	text_search.clear_button_enabled = true
+	text_search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_search.text_changed.connect(func(_t): _refresh_text_list(true))
+	text_only_edited = W.toggle("Edited only", false, func(_on): _refresh_text_list(true))
+	v.add_child(W.hbox([text_search, text_only_edited]))
+	text_list = ItemList.new()
+	text_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	text_list.custom_minimum_size.y = 120
+	text_list.item_selected.connect(func(i): _select_text(text_list.get_item_metadata(i)))
+	v.add_child(text_list)
+	text_edit = TextEdit.new()
+	text_edit.custom_minimum_size.y = 110
+	text_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	text_edit.text_changed.connect(_text_counter)
+	v.add_child(text_edit)
+	text_info = W.label("", W.MUTED)
+	v.add_child(text_info)
+	v.add_child(W.hbox([
+		W.button("Apply", _apply_text, "Save this string into the text bank of the current language"),
+		W.button("Original", _revert_text, "Put back the ROM's version of this string")]))
+	v.add_child(W.label("Accented letters À…ü, © ® ° … ¿ ¡ are available; {xx} / {xxxx} write raw codes; @1, @2… are "
+		+ "the game's placeholders (Sim name, numbers). The game reads the text once at boot: check edits from a fresh boot, not a savestate.", W.MUTED))
+	tabs.add_child(m)
+
+
+## Rebuild the string list when the language / bank changed (or `force`).
+func _refresh_text_list(force := false) -> void:
+	if gd == null or text_list == null:
+		return
+	var bank := gd.bank(lang)
+	var sig := [lang, bank.get_instance_id()]
+	if not force and sig == _text_sig:
+		return
+	var bank_changed := sig != _text_sig
+	_text_sig = sig
+	var q := text_search.text.strip_edges()
+	var want_id := -1
+	if q.to_lower().begins_with("0x") and q.substr(2).is_valid_hex_number():
+		want_id = q.substr(2).hex_to_int()
+	var ql := q.to_lower()
+	text_list.clear()
+	var edited := {}
+	if proj.is_edited("text", GameData.BANKS[lang]):
+		for i in proj.edited_text_ids(lang):
+			edited[i] = true
+	for i in bank.count():
+		if text_only_edited.button_pressed and not edited.has(i):
+			continue
+		var t := bank.text(i)
+		if want_id >= 0:
+			if i != want_id:
+				continue
+		elif ql != "" and t.to_lower().find(ql) < 0:
+			continue
+		var one := t.replace("\n", " ⏎ ")
+		if one.length() > 100:
+			one = one.substr(0, 100) + "…"
+		var row := text_list.add_item("%04X  %s" % [i, one])
+		text_list.set_item_metadata(row, i)
+		if edited.has(i):
+			text_list.set_item_custom_fg_color(row, W.WARN)
+		if i == text_id:
+			text_list.select(row)
+	if bank_changed and text_id >= 0:
+		_select_text(text_id)
+
+
+func _select_text(id: int) -> void:
+	text_id = id
+	if id < 0 or id >= gd.bank(lang).count():
+		text_edit.text = ""
+		return
+	text_edit.text = proj.text_of(lang, id)
+	_text_counter()
+
+
+func _text_counter() -> void:
+	if text_id < 0:
+		text_info.text = "Select a string."
+		return
+	var enc := TextBank.from_str(text_edit.text)
+	var head := "%s 0x%04X%s · " % [lang, text_id, " (edited)" if proj.is_text_edited(lang, text_id) else ""]
+	if enc.error != "":
+		text_info.text = head + enc.error
+		text_info.add_theme_color_override("font_color", W.WARN)
+	else:
+		text_info.text = head + "%d / %d bytes" % [enc.bytes.size(), TextBank.MAX_BYTES - 1]
+		text_info.add_theme_color_override("font_color", W.MUTED)
+
+
+func _apply_text() -> void:
+	if text_id < 0:
+		return
+	if not apply(proj.set_text(lang, text_id, text_edit.text)):
+		return
+	_opts.clear()
+	_text_counter()
+	status("String %s 0x%04X saved%s. The game reads the text at boot: test from a fresh boot." % [lang, text_id,
+		" (Huffman tree rebuilt for new characters)" if proj.last_tree_rebuilt else ""])
+
+
+func _revert_text() -> void:
+	if text_id < 0:
+		return
+	text_edit.text = proj.original_text(lang, text_id)
+	_apply_text()
 
 
 func _scroll_tab(title: String) -> VBoxContainer:
@@ -407,7 +554,10 @@ func _on_file_menu(id: int) -> void:
 	match id:
 		0: open_dlg.popup_centered_ratio(0.6)
 		1: _export_dialog()
-		2: ask("Drop every edit of this ROM (layouts, collision, room furniture)? This cannot be undone.", func():
+		4: _export_dialog("bps")
+		5: _test_in_emulator()
+		6: emu_dlg.popup_centered_ratio(0.6)
+		2: ask("Drop every edit of this ROM (layouts, collision, room furniture, text)? This cannot be undone.", func():
 			proj.discard_all()
 			_reload())
 		3: close_rom()
@@ -456,6 +606,8 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		view2d.queue_redraw()
 	elif k.keycode == KEY_Z and k.ctrl_pressed:
 		do_undo()
+	elif k.keycode == KEY_F5:
+		_test_in_emulator()
 	elif k.keycode == KEY_DELETE and mode == "items":
 		var it = _find(sel)
 		if it != null and it.kind == "item":
@@ -515,6 +667,7 @@ func _rebuild_view(refit: bool) -> void:
 	_build_items()
 	_render_tree()
 	_render_scripts()
+	_refresh_text_list()
 	if _find(sel) == null:
 		sel = ""
 	if mode == "items":
@@ -1250,23 +1403,73 @@ func _revert_location() -> void:
 		_reload())
 
 
-func _export_dialog() -> void:
+func _setting(k: String, default = null):
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS)
+	return cf.get_value("main", k, default)
+
+
+func _set_setting(k: String, v) -> void:
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS)
+	cf.set_value("main", k, v)
+	cf.save(SETTINGS)
+
+
+func _export_dialog(kind := "nds") -> void:
 	if proj == null:
 		return
+	save_kind = kind
 	var p := gd.rom.path
 	save_dlg.current_dir = p.get_base_dir()
-	save_dlg.current_file = p.get_file().get_basename() + "_edited.nds"
+	if kind == "bps":
+		save_dlg.filters = PackedStringArray(["*.bps ; BPS patch (Flips, ROM Patcher JS…)"])
+		save_dlg.title = "Export the edits as a BPS patch of the opened ROM"
+		save_dlg.current_file = p.get_file().get_basename() + "_edited.bps"
+	else:
+		save_dlg.filters = PackedStringArray(["*.nds ; Nintendo DS ROM"])
+		save_dlg.title = "Export the edited ROM"
+		save_dlg.current_file = p.get_file().get_basename() + "_edited.nds"
 	save_dlg.popup_centered_ratio(0.6)
 
 
+## Export to a scratch ROM in the user folder and open it with the emulator chosen in the settings.
+func _test_in_emulator() -> void:
+	if proj == null:
+		return
+	var emu: String = _setting("emulator", "")
+	if emu == "" or not FileAccess.file_exists(emu):
+		show_msg("Choose the emulator program first (melonDS recommended). It is remembered.", "Test in emulator")
+		emu_dlg.popup_centered_ratio(0.6)
+		return
+	var path := ProjectSettings.globalize_path(proj.dir.path_join("test.nds"))
+	DirAccess.make_dir_recursive_absolute(proj.dir)
+	status("Building the test ROM…")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var e := proj.export_rom(path)
+	if e != "":
+		show_msg("Export failed: " + e)
+		status("Export failed")
+		return
+	var pid := OS.create_process(emu, [path])
+	if pid < 0:
+		show_msg("Could not start %s" % emu)
+		status("Emulator failed to start")
+		return
+	status("Testing %s in %s%s" % [path.get_file(), emu.get_file(),
+		" (room furniture edits only show in a NEW game)" if proj.has_furniture_edits() else ""])
+
+
 func _export_to(path: String) -> void:
-	if not path.to_lower().ends_with(".nds"):
-		path += ".nds"
+	var ext := "." + save_kind
+	if not path.to_lower().ends_with(ext):
+		path += ext
 	status("Exporting %s…" % path.get_file())
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var t0 := Time.get_ticks_msec()
-	var e := proj.export_rom(path)
+	var e := proj.export_rom(path) if save_kind == "nds" else proj.export_patch(path)
 	if e != "":
 		show_msg("Export failed: " + e)
 		status("Export failed")
@@ -1274,4 +1477,5 @@ func _export_to(path: String) -> void:
 	var msg := "Exported %s (%.1f MB, %d edited file(s), %d ms)." % [path.get_file(),
 		FileAccess.get_file_as_bytes(path).size() / 1048576.0, proj.edits.size(), Time.get_ticks_msec() - t0]
 	status(msg)
-	show_msg(msg + ("\nRoom furniture edits only show in a NEW game." if proj.has_furniture_edits() else ""), "ROM exported")
+	show_msg(msg + ("\nRoom furniture edits only show in a NEW game." if proj.has_furniture_edits() else ""),
+		"ROM exported" if save_kind == "nds" else "Patch exported")

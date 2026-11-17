@@ -114,6 +114,12 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
+- 2026-11-17: text editing in the Godot editor (Text tab, text_bank.gd: Huffman re-encode + tree rebuild, output
+  byte-identical to tools/text.py). godot/tests/test_text.gd; exported ROM checked in melonDS (build/text_godot_test/).
+- 2026-11-16 (later): modding foundations in the Godot editor. ARM9 extension area (Arm9Mod: pad to 0x02152F00,
+  append, raise the main arena literal 0x020FB024; 64 and 512 KiB CONFIRMED in the emulator), table pointer search /
+  relocation helper, appended rom.bin entries (boot CONFIRMED), BPS patch export (checked by an independent decoder),
+  Test in emulator (F5). docs/formats/arm9.md, godot/tests/test_foundations.gd.
 - 2026-11-16: the Godot editor is now the ONLY editor. `godot-editor` merged into main, the Python/web editor `editor/`
   deleted (its history is in git). New editor features go in GDScript only; `tools/` stays as the Python RE lab.
 - Godot rewrite (2026-11-14, folder `godot/`): user rejected the web UI and the Python deps.
@@ -156,7 +162,8 @@ Code-driven approach:
 - Model textures fixed (2026-10-06): `tools/nitro.py bmd0_to_glb` replaces the nitrogen CLI. It fixes nitrogen's flipped V,
   its lost repeat/mirror wrap (taken from the material teximage_param) and its wrong NNS Maya texture SRT. 175/175 regenerated and
   checked against the game screenshots; the Maya formula itself comes from noclip (not confirmed in arm9).
-- Next step: rest of milestone 3 (to agree with the user):
+- Next step (to agree with the user): script editing in the Godot editor (conversations / messages pointing to
+  text ids); direct boot into a location for Test ▶. Older list from milestone 3:
   - drag in 3D;
   - editing scripts and text from the editor;
   - waypoint link display and editing;

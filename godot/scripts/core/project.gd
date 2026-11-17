@@ -1,6 +1,6 @@
 class_name EditProject
 extends RefCounted
-## Edits on top of the opened ROM: layout / BSP rom.bin entries and the default hotel room furniture (arm9 table),
+## Edits on top of the opened ROM: layout / BSP / text bank rom.bin entries and the default hotel room furniture (arm9 table),
 ## with undo, autosave and ROM export. Port of the former Python editor (editor/project.py, removed).
 ##
 ## Edits are saved as soon as they are made under user://projects/<sha1 of the ROM>/ (one file per edited entry,
@@ -12,7 +12,7 @@ extends RefCounted
 ## from another block might mean this item (ambiguous).
 ## Every mutating function returns "" on success or the reason it was refused (nothing changed then).
 
-const KINDS := ["layout", "bsp", "furniture"]
+const KINDS := ["layout", "bsp", "furniture", "text"]
 const UNDO_MAX := 100
 
 var gd: GameData
@@ -51,12 +51,15 @@ func _load_saved() -> void:
 		var parts := f.get_basename().split("_")
 		if parts.size() == 2 and parts[0] in KINDS and parts[1].is_valid_int():
 			edits[key(parts[0], parts[1].to_int())] = FileAccess.get_file_as_bytes(dir + "/" + f)
+	for l in GameData.BANKS:
+		if is_edited("text", GameData.BANKS[l]):
+			gd.set_bank_bytes(l, edits[key("text", GameData.BANKS[l])])
 
 
 func original(kind: String, entry: int) -> PackedByteArray:
 	match kind:
 		"furniture": return furn.defaults_bytes(entry)
-		"layout": return gd.rombin.raw_entry(entry)
+		"layout", "text": return gd.rombin.raw_entry(entry)
 		_: return gd.rombin.data(entry)
 
 
@@ -86,6 +89,11 @@ func _write(k: String, data) -> void:
 		if f:
 			f.store_buffer(data)
 			f.close()
+	if k.begins_with("text:"):
+		var e := k.split(":")[1].to_int()
+		for l in GameData.BANKS:
+			if GameData.BANKS[l] == e:
+				gd.set_bank_bytes(l, edits.get(k, PackedByteArray()))
 
 
 func _store(kind: String, entry: int, data: PackedByteArray) -> void:
@@ -468,6 +476,81 @@ func bsp_box(loc: int, lo: Vector3, hi: Vector3) -> String:
 	return _save_bsp(gd.locations[loc].bsp, t)
 
 
+# --- text --------------------------------------------------------------------------------------------------------
+
+## Text of string `id` in bank `lang`, with the edits.
+func text_of(lang: String, id: int) -> String:
+	return gd.bank(lang).text(id)
+
+
+var _orig_banks := {}
+
+
+func _orig_bank(lang: String) -> TextBank:
+	if not _orig_banks.has(lang):
+		_orig_banks[lang] = TextBank.new(original("text", GameData.BANKS[lang]))
+		_orig_banks[lang].all_strings()
+	return _orig_banks[lang]
+
+
+func original_text(lang: String, id: int) -> String:
+	return _orig_bank(lang).text(id)
+
+
+func is_text_edited(lang: String, id: int) -> bool:
+	if not is_edited("text", GameData.BANKS[lang]):
+		return false
+	return _orig_bank(lang).string_bytes(id) != gd.bank(lang).string_bytes(id)
+
+
+## Ids whose string differs from the ROM's.
+func edited_text_ids(lang: String) -> Array:
+	var out := []
+	if not is_edited("text", GameData.BANKS[lang]):
+		return out
+	var o := _orig_bank(lang)
+	var cur := gd.bank(lang)
+	for i in mini(o.count(), cur.count()):
+		if o.string_bytes(i) != cur.string_bytes(i):
+			out.append(i)
+	return out
+
+
+## Replace string `id` of bank `lang` (readable form, see TextBank.to_str). The Huffman tree is rebuilt when the
+## new text needs a byte the tree lacks (sets last_tree_rebuilt). When every string is back to the original the
+## original bank is restored (the edit disappears).
+var last_tree_rebuilt := false
+
+
+func set_text(lang: String, id: int, t: String) -> String:
+	last_tree_rebuilt = false
+	if not GameData.BANKS.has(lang):
+		return "no text bank for language %s" % lang
+	var e: int = GameData.BANKS[lang]
+	var bank := TextBank.new(current("text", e))
+	if id < 0 or id >= bank.count():
+		return "no string 0x%X (bank has %d)" % [id, bank.count()]
+	var enc := TextBank.from_str(t)
+	if enc.error != "":
+		return enc.error
+	if bank.string_bytes(id) == enc.bytes:
+		return ""
+	var orig := _orig_bank(lang)
+	bank.all_strings()
+	bank.strings[id] = enc.bytes
+	if bank.strings == orig.all_strings():
+		_store("text", e, orig.data)
+		return ""
+	last_tree_rebuilt = bank.set_string(id, enc.bytes)
+	var data := bank.write()
+	if data.is_empty():
+		return "internal error: a byte has no Huffman code"
+	if TextBank.new(data).all_strings() != bank.strings:
+		return "internal error: the re-encoded bank does not decode back to the same strings"
+	_store("text", e, data)
+	return ""
+
+
 # --- room furniture -----------------------------------------------------------------------------------------------
 
 func furniture_slot(loc: int) -> int:
@@ -511,16 +594,19 @@ func edit_furniture(loc: int, i: int, prop = null, x = null, z = null, rot = nul
 	return ""
 
 
-func patched_arm9() -> PackedByteArray:
-	var a9 := gd.a9.duplicate()
+## ARM9 with the edits that live in it (default room furniture), on top of whatever the opened ROM already has
+## (an extension area from an earlier export is kept). See Arm9Mod.
+func arm9_mod() -> Arm9Mod:
+	var m := Arm9Mod.new(gd.a9)
 	for k in edits:
 		var parts: PackedStringArray = k.split(":")
 		if parts[0] == "furniture":
-			var o := RoomFurn.DEFAULTS - GameData.BASE + 24 * parts[1].to_int()
-			var d: PackedByteArray = edits[k]
-			for j in 24:
-				a9[o + j] = d[j]
-	return a9
+			m.write(RoomFurn.DEFAULTS + 24 * parts[1].to_int(), edits[k])
+	return m
+
+
+func patched_arm9() -> PackedByteArray:
+	return arm9_mod().build()
 
 
 func has_furniture_edits() -> bool:
@@ -532,10 +618,13 @@ func has_furniture_edits() -> bool:
 
 # --- export -------------------------------------------------------------------------------------------------------
 
-## Write a new ROM with every edit at `out_path`. "" or an error.
-func export_rom(out_path: String) -> String:
-	if out_path == gd.rom.path:
-		return "choose another file than the opened ROM"
+## The edited ROM image. Sets `last_hints` (unchanged ranges, for export_patch). Empty on error (`build_error`).
+var last_hints := []
+var build_error := ""
+
+
+func build_rom() -> PackedByteArray:
+	build_error = ""
 	var reps := {}
 	for k in edits:
 		var parts: PackedStringArray = k.split(":")
@@ -548,14 +637,52 @@ func export_rom(out_path: String) -> String:
 			reps[e] = p
 		elif parts[0] == "bsp":
 			reps[e] = S2Cmp.stored_blob(d)
+		elif parts[0] == "text":
+			reps[e] = d
 	var files := {}
 	if not reps.is_empty():
 		files[gd.rombin_file_id] = gd.rombin.build(reps)
-	var a9 := patched_arm9() if has_furniture_edits() else PackedByteArray()
+	var a9 := PackedByteArray()
+	if has_furniture_edits():
+		var m := arm9_mod()
+		if m.error != "":
+			build_error = m.error
+			return PackedByteArray()
+		a9 = m.build()
 	var out := gd.rom.rebuild(files, a9)
+	last_hints = gd.rom.last_map.duplicate()
+	if files.has(gd.rombin_file_id):
+		var old_start := gd.rom.file_range(gd.rombin_file_id).x
+		var new_start := out.decode_u32(out.decode_u32(0x48) + 8 * gd.rombin_file_id)
+		for h in gd.rombin.last_map:
+			last_hints.append([new_start + h[0], old_start + h[1], h[2]])
+	return out
+
+
+func _save(out_path: String, b: PackedByteArray) -> String:
 	var f := FileAccess.open(out_path, FileAccess.WRITE)
 	if f == null:
 		return "cannot write %s (%s)" % [out_path, error_string(FileAccess.get_open_error())]
-	f.store_buffer(out)
+	f.store_buffer(b)
 	f.close()
 	return ""
+
+
+## Write a new ROM with every edit at `out_path`. "" or an error.
+func export_rom(out_path: String) -> String:
+	if out_path == gd.rom.path:
+		return "choose another file than the opened ROM"
+	var out := build_rom()
+	if out.is_empty():
+		return build_error
+	return _save(out_path, out)
+
+
+## Write a BPS patch (opened ROM -> edited ROM) at `out_path`. "" or an error.
+func export_patch(out_path: String) -> String:
+	if out_path == gd.rom.path:
+		return "choose another file than the opened ROM"
+	var out := build_rom()
+	if out.is_empty():
+		return build_error
+	return _save(out_path, Bps.encode(gd.rom.data, out, last_hints))

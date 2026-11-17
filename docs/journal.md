@@ -873,3 +873,42 @@ User request: no web UI, no Python dependencies, user picks the ROM at runtime, 
   with compressed_static_end = 0 only when furniture is edited.
 - Emulator: the exported BLZ-based test ROM boots and reaches the town intro (build/godot_test/boot.png).
 - Not done: in-game check of each edit from the Godot export (same bytes as the Python pipeline produced, checked by reopening).
+
+
+## 2026-11-16 — Modding foundations: ARM9 extension, new rom.bin entries, BPS patches, test in emulator
+
+Godot is now the only editor. Low-level tools for adding new content rather than only editing existing records.
+- **ARM9 layout, CONFIRMED (code)**: module params, autoload list, overlay table and crt0 read from the binary;
+  `OS_GetInitArenaLo` (0x020FAF54) returns the main arena start 0x02152F00 (= end of overlay 10) from the literal at
+  0x020FB024. Details in docs/formats/arm9.md.
+- **Hypothesis**: padding the ARM9 up to 0x02152F00, appending data and raising that literal gives a RAM area loaded
+  at boot that the heap never covers. **Test**: ROMs with a 64 KiB and a 512 KiB extension carrying markers, fresh
+  boot to in-game, warps to locations 9, 30, 2. **Result, CONFIRMED**: markers present and intact, heap header moved
+  to the new arena start, every location loads. Heap headroom past 512 KiB not measured (assumed).
+- **rom.bin**: one appended entry → boots and plays (CONFIRMED). Table rebuild of an unchanged archive stays identical.
+- **BPS export**: IPS cannot address past 16 MiB (ROM is 64 MiB). BPS encoder uses the rebuild's copy map
+  (unchanged regions and rom.bin entries, shifted) as SourceCopy actions. Test edit set: 72 KB patch. Checked by
+  the GDScript decoder and by an independent Python decoder (zlib CRCs, result byte-identical to the exported ROM).
+- **Test in emulator**: export to the project folder, start the chosen emulator on it (checked with melonDS 1.1 on
+  Windows). Direct boot into a given location not done (needs a boot-path patch).
+- Tests: godot/tests/test_foundations.gd (25 checks), test_core and test_edits still pass.
+
+
+## 2026-11-17 — Text editing in the Godot editor
+
+- **Port**: `godot/scripts/core/text_bank.gd` now writes banks: decode every string, `codes()`, Huffman
+  `rebuild_tree()` with the same tie-breaks as `text.py` (heap on weight, order, symbol, plus the weight-0 dummy leaf
+  0x100), `write()`, `from_str` / `to_str`. Edits are a new project kind `text:<rom.bin entry>` (whole bank),
+  autosaved, undoable, exported as a replaced rom.bin entry. The UI shows edited text everywhere (scripts, NPC names).
+- **Bug found**: the Godot reader mapped 0xB9 to a plain space instead of U+00A0, so 103 strings per bank did not
+  round-trip through text → bytes. Fixed (`char(0xA0)`).
+- **Limit added**: strings over 0x3FF bytes are refused (Txt_GetString buffer is 0x400 bytes). From the code's
+  buffer size; not tested in game.
+- **Tests** (`godot/tests/test_text.gd`, 0 failures): 6/6 banks re-encode byte-identical; text → bytes → text
+  identical for every string of the 6 banks; ASCII edit keeps the tree; accented edit rebuilds it; restoring the
+  text drops the edit; undo; French edit; export → reopen shows the edits, the other 8864 rom.bin entries unchanged,
+  header CRC OK. English bank after edits 0x0005 / 0x0007 / 0x049F is **byte-identical** to `text.py edit` with the
+  same strings (102 444 → 102 060 bytes). test_core, test_edits, test_foundations still pass.
+- **Emulator, CONFIRMED** (build/text_godot_test/, fresh boot of the exported ROM): logo screen shows
+  "Touch to start (édité)" (0x0005), main menu shows "Load-a-Sim ¿À É Î Õ Ü ñ ç ß œ ° …" (0x0007, too wide for the
+  button, as expected). 0x049F not replayed in game (same bank bytes as the Python test of 2026-10-06).

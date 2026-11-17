@@ -75,17 +75,28 @@ func data(i: int) -> PackedByteArray:
 	return d
 
 
-## Archive with some entries replaced: {index: raw entry bytes}.
-func build(replacements: Dictionary) -> PackedByteArray:
+## Archive with some entries replaced ({index: raw entry bytes}) and new entries appended after the last one
+## (`added`: raw entry bytes, 4-aligned; they get the indices count(), count() + 1, ...). The game reads the table one
+## entry at a time (Arc_GetEntrySize / Arc_ReadEntryRaw: seek idx*4, read 8 bytes), it keeps no entry count.
+## Sets `last_map`: [[new offset, old offset, size]] of the byte ranges copied unchanged (for patch export).
+var last_map := []
+
+
+func build(replacements: Dictionary, added := []) -> PackedByteArray:
 	var n := count()
+	var total := n + added.size()
 	var head := PackedByteArray()
-	head.resize(4 * (n + 1))
-	var pos := 4 * (n + 1)
+	head.resize(4 * (total + 1))
+	var pos := 4 * (total + 1)
 	for i in n:
 		head.encode_u32(4 * i, pos)
 		pos += replacements[i].size() if replacements.has(i) else offs[i + 1] - offs[i]
-	head.encode_u32(4 * n, pos)
+	for k in added.size():
+		head.encode_u32(4 * (n + k), pos)
+		pos += added[k].size()
+	head.encode_u32(4 * total, pos)
 	var out := head
+	last_map = []
 	var i := 0
 	while i < n:
 		if replacements.has(i):
@@ -95,6 +106,9 @@ func build(replacements: Dictionary) -> PackedByteArray:
 		var j := i
 		while j < n and not replacements.has(j):
 			j += 1
+		last_map.append([out.size(), offs[i], offs[j] - offs[i]])
 		out.append_array(raw.slice(offs[i], offs[j]))
 		i = j
+	for a in added:
+		out.append_array(a)
 	return out

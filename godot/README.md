@@ -29,8 +29,15 @@ The Godot binaries are not committed (see `.gitignore`).
    - **Add item** tab: type, target group (with what spawns it), fields, place on map;
    - **Edit collision**: click a cell (again = next cell below), delete / move it, add a box;
    - hotel room default furniture (locations 8, 29, 17, 15, 18, 20): drag on the grid, prop picker (new games only).
+   - **Text** tab: search the strings of the selected language (text or `0x49f`), edit one, Apply. Accented
+     letters are allowed; the Huffman tree is rebuilt when a new character needs it. The game reads the text once
+     at boot: check text edits from a fresh boot, not a savestate.
    - Ctrl+Z undo, **Revert location**, File > Discard every edit.
 4. **Export ROM…** writes a new `.nds`. The opened ROM is never written.
+   - File > **Export as BPS patch…** writes a patch of the opened ROM instead (apply with Flips, ROM Patcher JS…).
+     Share the patch, not the ROM.
+   - **Test ▶** (F5) builds a scratch ROM in the project folder and opens it in your emulator (chosen once with
+     File > Choose emulator…; melonDS recommended).
 
 Edits are autosaved under the Godot user folder (`%APPDATA%/Godot/app_userdata/Sims 2 DS Map Editor/projects/<sha1 of the ROM>/`),
 so reopening the same ROM restores them.
@@ -40,10 +47,12 @@ so reopening the same ROM restores them.
 | file | role (port of) |
 |---|---|
 | `scripts/core/nds_rom.gd` | `.nds` header, NitroFS, ARM9, rebuild with relayout (replaces ndstool) |
+| `scripts/core/arm9_mod.gd` | ARM9 patches and extension area for new data/code (`docs/formats/arm9.md`) |
+| `scripts/core/bps.gd` | BPS patch encoder / decoder |
 | `scripts/core/blz.gd` | ARM9 BLZ decompression (ndspy codeCompression) |
 | `scripts/core/s2cmp.gd`, `rombin.gd` | rom.bin entries and their compression (`tools/s2cmp.py`, `rombin.py`) |
 | `scripts/core/game_data.gd` | ARM9 tables, locations, model names, text, object info (`locations.py`, `objinfo.py`) |
-| `scripts/core/text_bank.gd` | Huffman text banks, read only (`text.py`) |
+| `scripts/core/text_bank.gd` | Huffman text banks: read, edit, tree rebuild (`text.py`) |
 | `scripts/core/layout.gd`, `layscript.gd` | layout files and script opcodes (`layout.py`, `layscript.py`) |
 | `scripts/core/bsp.gd` | collision BSP, cell edits (`bsp.py`) |
 | `scripts/core/roomfurn.gd` | hotel room furniture placement, prop variant textures (`roomfurn.py`) |
@@ -59,5 +68,7 @@ The formats are documented in `../docs/formats/`.
 ```
 godot --headless --path . --script res://tests/test_core.gd  -- sims2.nds   # round-trips, models, icons
 godot --headless --path . --script res://tests/test_edits.gd -- sims2.nds out.nds   # edits -> export -> reopen
-godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells]   # UI screenshot
+godot --headless --path . --script res://tests/test_foundations.gd -- sims2.nds out_dir [ext_kib]   # ARM9 extension, rom.bin entries, BPS
+godot --headless --path . --script res://tests/test_text.gd -- sims2.nds out_dir   # text banks: round-trip, edits, export
+godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query]   # UI screenshot
 ```

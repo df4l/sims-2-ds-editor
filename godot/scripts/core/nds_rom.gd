@@ -153,6 +153,10 @@ func arm9_decompressed() -> PackedByteArray:
 ## (uncompressed, compressed_static_end already 0) or an empty array to keep the stored one.
 ## Every region (ARM9, ARM7, overlay tables, FNT, FAT, banner, files) keeps its original order; a region that grows
 ## pushes the following ones (gaps are kept, shifts are multiples of 0x200). Unchanged input -> identical output.
+## Sets `last_map`: [[new offset, old offset, size]] of the ranges copied unchanged from this image (patch export).
+var last_map := []
+
+
 func rebuild(files: Dictionary, arm9 := PackedByteArray()) -> PackedByteArray:
 	var regions := []   # {kind, id, start, size, bytes (new content or null)}
 	var a9_off := u32(0x20)
@@ -214,6 +218,7 @@ func rebuild(files: Dictionary, arm9 := PackedByteArray()) -> PackedByteArray:
 		regions[fat_i].bytes = fat
 
 	var out := PackedByteArray()
+	last_map = []
 	out.append_array(data.slice(0, regions[0].start))
 	for i in regions.size():
 		var r: Dictionary = regions[i]
@@ -226,6 +231,7 @@ func rebuild(files: Dictionary, arm9 := PackedByteArray()) -> PackedByteArray:
 				prev_end = regions[i - 1].start + regions[i - 1].size
 			var ogap: int = r.start - prev_end
 			if i > 0 and ogap == gap and regions[i - 1].bytes == null:
+				last_map.append([out.size(), prev_end, gap])
 				out.append_array(data.slice(prev_end, r.start))
 			else:
 				var pad := PackedByteArray()
@@ -233,6 +239,7 @@ func rebuild(files: Dictionary, arm9 := PackedByteArray()) -> PackedByteArray:
 				pad.fill(0xFF)
 				out.append_array(pad)
 		if r.bytes == null:
+			last_map.append([out.size(), r.start, r.size])
 			out.append_array(data.slice(r.start, r.start + r.size))
 		else:
 			out.append_array(r.bytes)

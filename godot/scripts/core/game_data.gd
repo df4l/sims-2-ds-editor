@@ -195,6 +195,11 @@ func bank(lang: String) -> TextBank:
 	return _banks[lang]
 
 
+## Show this bank content instead of the ROM's (edited text, see EditProject). Empty = back to the ROM's.
+func set_bank_bytes(lang: String, d: PackedByteArray) -> void:
+	_banks[lang] = TextBank.new(d if not d.is_empty() else rombin.raw_entry(BANKS[lang]))
+
+
 func text(i: int, lang := "en") -> String:
 	return bank(lang).text(i)
 
