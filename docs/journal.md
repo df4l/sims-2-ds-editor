@@ -912,3 +912,30 @@ Godot is now the only editor. Low-level tools for adding new content rather than
 - **Emulator, CONFIRMED** (build/text_godot_test/, fresh boot of the exported ROM): logo screen shows
   "Touch to start (édité)" (0x0005), main menu shows "Load-a-Sim ¿À É Î Õ Ü ñ ç ß œ ° …" (0x0007, too wide for the
   button, as expected). 0x049F not replayed in game (same bank bytes as the Python test of 2026-10-06).
+
+
+## 2026-11-17 — Script editing in the Godot editor
+
+- **Text form of a block's scripts** (`layscript.gd`: `disassemble` / `assemble`): one op per line,
+  `name(field=value, …)`, `script N` headers, `;` comments (NPC names, dialogue lines, regenerated on load). Every
+  argument byte is covered: named fields from `OPS`, then `_<offset>` for bytes no handler reads and the padding up
+  to the ARG_SIZE record, so the text loses nothing.
+- **Bug found**: the opcode specs used `x` both for "unused byte" and for the x coordinate of 0x0D actor_teleport and
+  0x1B actor_walk_to, so `decode_args` / `describe` silently dropped those x coordinates (Python and Godot). Unused
+  bytes are now named `_` in both tables.
+- **Edit checks** (`EditProject.set_scripts`): every group / script ref of every script and trigger box must stay in
+  its target block (`target_blocks`: the block itself, or every variant block for block 0); conversation < 216,
+  location < 33; at least one script (the game runs script 1 when the block loads); u16 block size; runtime limits.
+  The original data has **0** broken references (32 layouts), so the rule is strict.
+- **Tests** (`godot/tests/test_scripts.gd`, 0 failures): 32 layouts, 659 scripts, 1267 ops: text → assemble gives
+  the same bytes (with English and French comments, and without), every layout rebuilt byte-identical; assembler
+  errors (unknown op, missing field, range, numbering, duplicates); new script + call, refusals (group past the
+  block, dropping a still-called script, conversation 250), undo, export → reopen. test_core, test_edits, test_text,
+  test_foundations still pass.
+- **Emulator, CONFIRMED** (build/scripts_test/, fresh boot, new game): location 5 block 1 script 3
+  `conversation(0, 1, 25)` replaced by `spawn_run(0, 28)` + a new script 28 `conversation(2, 1, 25)`. The intro
+  plays Jebediah's conversation 2 ("Hold on now, I'm thinking!", then "Shoot, kid…") instead of conversation 0
+  ("Whoa there, slick"): appended scripts are run by the game.
+- **UI**: Scripts tab is now an editor (CodeEdit, highlighting, opcode completion, Ctrl+S apply, error line
+  highlighted, unapplied text kept across item edits, "Text of line" opens the strings of a conversation / message
+  in the Text tab, Opcodes… reference).

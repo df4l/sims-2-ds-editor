@@ -22,6 +22,7 @@ func _init() -> void:
 		quit(2)
 		return
 	var out_dir: String = args[1]
+	DirAccess.make_dir_recursive_absolute(out_dir)
 	var ext_kib := 64 if args.size() < 3 else args[2].to_int()
 
 	# --- ARM9 -------------------------------------------------------------------------------------------------

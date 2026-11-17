@@ -161,6 +161,8 @@ func _save_layout(nav: int, lay: Layout) -> String:
 	if not errs.is_empty():
 		return "; ".join(errs)
 	var data := lay.write()
+	if lay.write_error != "":
+		return lay.write_error
 	var chk := Layout.parse(data, gd.arg_size)
 	if chk.error != "":
 		return "the edited layout does not parse back: " + chk.error
@@ -404,6 +406,74 @@ func delete_item(loc: int, b: int, g: int, i: int) -> String:
 					w.raw[o] = 0
 				elif w.raw[o] > i + 1:
 					w.raw[o] -= 1
+	return _save_layout(nav_of(loc), lay)
+
+
+## Blocks whose groups / scripts the 1-based refs of block b point into: b itself for a variant block; for block 0
+## every variant block (the one the game selected), or block 0 when there is no variant.
+static func target_blocks(lay: Layout, b: int) -> Array:
+	if b or lay.blocks.size() == 1:
+		return [b]
+	return range(1, lay.blocks.size())
+
+
+## Broken script / trigger references of a whole layout (each a readable string). The game would run a wrong or
+## out-of-table group / script, conversation or location for these.
+func script_ref_errors(lay: Layout) -> Array:
+	var out := []
+	for b in lay.blocks.size():
+		var blk: Layout.Block = lay.blocks[b]
+		var refs := []   # [where, kind, value]
+		for si in blk.scripts.size():
+			var s: Array = blk.scripts[si]
+			for k in s.size():
+				var op: int = s[k][0]
+				var where := "block %d script %d op %d %s" % [b, si + 1, k + 1, LayScript.op_name(op)]
+				for r in LayScript.flow_refs(op, s[k][1]):
+					refs.append([where + " " + r[0], r[1], r[2]])
+				var a := LayScript.decode_args(op, s[k][1])
+				if a.has("conv") and a.conv >= GameData.N_CONV and not (op == 0x19 and a.conv == 0xD8):
+					out.append("%s: conversation %d does not exist (0..%d)" % [where, a.conv, GameData.N_CONV - 1])
+				if a.has("location") and a.location >= GameData.LOC_COUNT:
+					out.append("%s: location %d does not exist (0..%d)" % [where, a.location, GameData.LOC_COUNT - 1])
+		for g in blk.groups.size():
+			for i in blk.groups[g].items.size():
+				var it: Layout.Item = blk.groups[g].items[i]
+				if it.type == 3:
+					var where := "trigger box block %d group %d item %d" % [b, g, i + 1]
+					refs.append([where + " group", "group", it.get_field("group")])
+					refs.append([where + " script", "script", it.get_field("script")])
+		for r in refs:
+			if r[2] == 0:
+				continue
+			for t in target_blocks(lay, b):
+				var tb: Layout.Block = lay.blocks[t]
+				var n: int = tb.groups.size() if r[1] == "group" else tb.scripts.size()
+				if r[2] > n:
+					out.append("%s = %d, but block %d has %d %ss (1-based, 0 = none)" % [r[0], r[2], t, n, r[1]])
+	return out
+
+
+## Replace the scripts of block b. Refused when it leaves a script or trigger reference broken (that the original
+## data did not already have) or breaks a runtime limit.
+func set_scripts(loc: int, b: int, scripts: Array) -> String:
+	var lay := load_layout(loc)
+	if lay == null:
+		return "this location has no layout"
+	if b < 0 or b >= lay.blocks.size():
+		return "no block %d" % b
+	if scripts.is_empty() and not lay.blocks[b].scripts.is_empty():
+		return "the game runs script 1 when the block is loaded: keep at least one script (it may hold a no-op like nop_0b())"
+	var before := {}
+	for e in script_ref_errors(Layout.parse(original("layout", nav_of(loc)), gd.arg_size)):
+		before[e] = true
+	lay.blocks[b].scripts = scripts
+	var errs := []
+	for e in script_ref_errors(lay):
+		if not before.has(e):
+			errs.append(e)
+	if not errs.is_empty():
+		return "broken references:\n" + "\n".join(errs.slice(0, 12)) + ("\n…" if errs.size() > 12 else "")
 	return _save_layout(nav_of(loc), lay)
 
 

@@ -114,6 +114,9 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
+- 2026-11-17 (later): script editing in the Godot editor (Scripts tab: text form `op(field=value)`, assembler
+  byte-identical on 659/659 scripts, ref checks, new scripts). godot/tests/test_scripts.gd; new script run in game
+  CONFIRMED (build/scripts_test/). Fixed: x coordinate of ops 0x0D / 0x1B was hidden (unused bytes now `_`).
 - 2026-11-17: text editing in the Godot editor (Text tab, text_bank.gd: Huffman re-encode + tree rebuild, output
   byte-identical to tools/text.py). godot/tests/test_text.gd; exported ROM checked in melonDS (build/text_godot_test/).
 - 2026-11-16 (later): modding foundations in the Godot editor. ARM9 extension area (Arm9Mod: pad to 0x02152F00,
@@ -162,8 +165,8 @@ Code-driven approach:
 - Model textures fixed (2026-10-06): `tools/nitro.py bmd0_to_glb` replaces the nitrogen CLI. It fixes nitrogen's flipped V,
   its lost repeat/mirror wrap (taken from the material teximage_param) and its wrong NNS Maya texture SRT. 175/175 regenerated and
   checked against the game screenshots; the Maya formula itself comes from noclip (not confirmed in arm9).
-- Next step (to agree with the user): script editing in the Godot editor (conversations / messages pointing to
-  text ids); direct boot into a location for Test ▶. Older list from milestone 3:
+- Next step (to agree with the user): editing the conversation table (which lines / speakers a conversation
+  holds, new conversations, arm9 0x0211F16C) and the message table; direct boot into a location for Test ▶. Older list from milestone 3:
   - drag in 3D;
   - editing scripts and text from the editor;
   - waypoint link display and editing;

@@ -96,7 +96,7 @@ def actor_anim_name(block, g: int, i: int, anim: int) -> str:
 
 
 # --- opcode table -------------------------------------------------------------------------------------------------
-# fields: 'name:fmt' with fmt B (u8), h (s16), H (u16), x (unused byte); unlisted trailing bytes are padding.
+# fields: 'name:fmt' with fmt B (u8), h (s16), H (u16), '_' names an unused byte; unlisted trailing bytes are padding.
 # status: C = role CONFIRMED by the handler code, A = mechanism read in the code but the game meaning is ASSUMED
 OPS = {
     0x00: ('despawn_item', 'group:B item:B', 'C', 'Nav_DespawnGroupItem(group, item)'),
@@ -131,7 +131,7 @@ OPS = {
     0x19: ('npc_set_talk', 'npc:B conv:B b2:B b3:B flag:B', 'C',
            'conversation offered by the NPC when talked to (30-slot table [G]+0x2FA4, FUN_02082cf0); '
            'conv 0xD8 = none. 71/79 uses name a conversation where this NPC speaks. b2 0x58 = none (flag?)'),
-    0x1A: ('camera_look_at', 'x:B x:B x:B x:B g:B i:B script:B', 'C',
+    0x1A: ('camera_look_at', '_:B _:B _:B _:B g:B i:B script:B', 'C',
            'camera turns to the actor (FUN_020ba100); script stored at camera+0x2BB, run when done (chains seen)'),
     0x1B: ('actor_walk_to', 'x:h y:h z:h g:B i:B mode:B b9:B', 'C', 'actor message 0x18 (NPC) / 0x1b (Sim)'),
     0x1C: ('npc_mood', 'g:B i:B mood:B', 'C',
@@ -161,13 +161,13 @@ OPS = {
            'Cam_Shake(seconds*60 frames, strength << 12), plays sound 9; script stored at camera+0x2BB like 0x1A'),
     0x27: ('nop_27', '', 'C', 'empty handler'),
     0x28: ('nop_28', '', 'C', 'empty handler'),
-    0x29: ('camera_closeup', 'x:B x:B g:B i:B', 'C', 'camera framed on the actor (FUN_02076b60)'),
+    0x29: ('camera_closeup', '_:B _:B g:B i:B', 'C', 'camera framed on the actor (FUN_02076b60)'),
     0x2A: ('phone_conversation', 'conv:B group:B script:B', 'C',
            'conversation with flag bit 24 (prop 0xFD = phone in hand); deferred through an event watcher while '
            'the player is busy (FUN_0206422c: free roam, idle, no cutscene, gate 0x49); conv 3 = special state 0x21'),
     0x2B: ('if_hotel_score', 'min:H group:B script:B else_group:B else_script:B', 'C',
            'Coll_GetScore: sum of LOCATION_TABLE score of the open locations >= min ("score of 20 percent")'),
-    0x2C: ('if_stat', 'min:H idx:B x:B group:B script:B else_group:B else_script:B', 'A', 'byte [G]+0x5B+idx >= min'),
+    0x2C: ('if_stat', 'min:H idx:B _:B group:B script:B else_group:B else_script:B', 'A', 'byte [G]+0x5B+idx >= min'),
     0x2D: ('if_location_open', 'location:B group:B script:B else_group:B else_script:B', 'C',
            'open bit of the location ([G]+0x41F8+0x218). Emulator: City Hall bit cleared -> its door stays shut'),
     0x2E: ('if_goal_started', 'goal:B group:B script:B else_group:B else_script:B', 'C', 'goal bit 1'),
@@ -203,7 +203,7 @@ OPS = {
     0x41: ('npc_want_item', 'npc:B item:B script:B', 'C',
            '2-slot table NPC area +0x84: giving `item` to the NPC runs `script` (Honest Jackson, item 78 = '
            'the gift from Frankie -> script 7 "From Frankie Fusilli?")'),
-    0x42: ('if_next_goal_ready', 'x:B group:B script:B else_group:B else_script:B', 'C',
+    0x42: ('if_next_goal_ready', '_:B group:B script:B else_group:B else_script:B', 'C',
            'FUN_020778ac: next goal of the mission may start (delay since the last goal done >= GOAL_TABLE '
            'delay, all 0 in the data); false once the 4 missions are done'),
     0x43: ('set_weather', 'mode:B', 'C',
@@ -248,7 +248,7 @@ def decode_args(op: int, args: bytes) -> dict:
     for f in spec.split():
         k, t = f.split(':')
         fmt, n = _FMT[t]
-        if k != 'x':
+        if k != '_':
             out[k] = struct.unpack_from(fmt, args, p)[0]
         p += n
     return out

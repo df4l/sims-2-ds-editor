@@ -29,6 +29,10 @@ The Godot binaries are not committed (see `.gitignore`).
    - **Add item** tab: type, target group (with what spawns it), fields, place on map;
    - **Edit collision**: click a cell (again = next cell below), delete / move it, add a box;
    - hotel room default furniture (locations 8, 29, 17, 15, 18, 20): drag on the grid, prop picker (new games only).
+   - **Scripts** tab: the scripts of block 0 or of the shown variant as text, one op per line
+     (`spawn_run(group=2, script=5)`), dialogue lines as comments. Edit, add `script N` at the end, Apply
+     (Ctrl+S). Broken group / script / conversation refs are refused. "Text of line" opens the strings of
+     the conversation / message on the caret line in the Text tab; Opcodes… lists every opcode.
    - **Text** tab: search the strings of the selected language (text or `0x49f`), edit one, Apply. Accented
      letters are allowed; the Huffman tree is rebuilt when a new character needs it. The game reads the text once
      at boot: check text edits from a fresh boot, not a savestate.
@@ -70,5 +74,6 @@ godot --headless --path . --script res://tests/test_core.gd  -- sims2.nds   # ro
 godot --headless --path . --script res://tests/test_edits.gd -- sims2.nds out.nds   # edits -> export -> reopen
 godot --headless --path . --script res://tests/test_foundations.gd -- sims2.nds out_dir [ext_kib]   # ARM9 extension, rom.bin entries, BPS
 godot --headless --path . --script res://tests/test_text.gd -- sims2.nds out_dir   # text banks: round-trip, edits, export
+godot --headless --path . --script res://tests/test_scripts.gd -- sims2.nds out_dir   # layout scripts: text round-trip, edits, export
 godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query]   # UI screenshot
 ```

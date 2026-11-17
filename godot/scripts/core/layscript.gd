@@ -1,7 +1,7 @@
 class_name LayScript
 extends RefCounted
 ## Layout script opcodes (Nav_DispatchScriptOp 0x0204299c, handler table 0x0211E4F0). Doc: docs/formats/layout.md §4b
-## Field specs: "name:fmt", fmt B (u8), h (s16), H (u16); "x" names an unused byte.
+## Field specs: "name:fmt", fmt B (u8), h (s16), H (u16); "_" names an unused byte.
 ## group / script: 1-based in the selected variant block, 0 = none. (g, i): item i (1-based) of group g, g 0xFF = player.
 
 const MOOD := ["normal", "angry", "romantic", "sad", "drunk", "impatient?", "cow_stare", "hi_five", "double_guns",
@@ -35,7 +35,7 @@ static var OPS := {
 	0x17: ["conversation", "conv:B group:B script:B", "C", "conversation lines; at the end spawn group + run script"],
 	0x18: ["nop_18", "", "C", "empty handler"],
 	0x19: ["npc_set_talk", "npc:B conv:B b2:B b3:B flag:B", "C", "conversation offered by the NPC when talked to (0xD8 = none)"],
-	0x1A: ["camera_look_at", "x:B x:B x:B x:B g:B i:B script:B", "C", "camera turns to the actor; script run when done"],
+	0x1A: ["camera_look_at", "_:B _:B _:B _:B g:B i:B script:B", "C", "camera turns to the actor; script run when done"],
 	0x1B: ["actor_walk_to", "x:h y:h z:h g:B i:B mode:B b9:B", "C", "actor walks to a point"],
 	0x1C: ["npc_mood", "g:B i:B mood:B", "C", "NPC animation set (MOOD names)"],
 	0x1D: ["actor_resume_ai", "g:B i:B", "C", "NPC gets its default roaming back"],
@@ -50,10 +50,10 @@ static var OPS := {
 	0x26: ["camera_shake", "seconds:h strength:h b4:B script:B", "C", "Cam_Shake, sound 9; script when done"],
 	0x27: ["nop_27", "", "C", "empty handler"],
 	0x28: ["nop_28", "", "C", "empty handler"],
-	0x29: ["camera_closeup", "x:B x:B g:B i:B", "C", "camera framed on the actor"],
+	0x29: ["camera_closeup", "_:B _:B g:B i:B", "C", "camera framed on the actor"],
 	0x2A: ["phone_conversation", "conv:B group:B script:B", "C", "conversation on the phone"],
 	0x2B: ["if_hotel_score", "min:H group:B script:B else_group:B else_script:B", "C", "hotel score >= min"],
-	0x2C: ["if_stat", "min:H idx:B x:B group:B script:B else_group:B else_script:B", "A", "byte [G]+0x5B+idx >= min"],
+	0x2C: ["if_stat", "min:H idx:B _:B group:B script:B else_group:B else_script:B", "A", "byte [G]+0x5B+idx >= min"],
 	0x2D: ["if_location_open", "location:B group:B script:B else_group:B else_script:B", "C", "open bit of the location"],
 	0x2E: ["if_goal_started", "goal:B group:B script:B else_group:B else_script:B", "C", "goal bit 1"],
 	0x2F: ["if_goal_done", "goal:B group:B script:B else_group:B else_script:B", "C", "goal bit 2"],
@@ -75,7 +75,7 @@ static var OPS := {
 	0x3F: ["counter24_sub", "idx:B amount:B", "C", "byte [G]+0x24+idx -= amount"],
 	0x40: ["shop_unlock_item", "item:B", "A", "quest tools made available"],
 	0x41: ["npc_want_item", "npc:B item:B script:B", "C", "giving item to the NPC runs script"],
-	0x42: ["if_next_goal_ready", "x:B group:B script:B else_group:B else_script:B", "C", "next goal of the mission may start"],
+	0x42: ["if_next_goal_ready", "_:B group:B script:B else_group:B else_script:B", "C", "next goal of the mission may start"],
 	0x43: ["set_weather", "mode:B", "C", "0 by date, 1 off, 2 on"],
 	0x44: ["set_flag_bit2", "", "A", "[0x0213E434] word |= 4"],
 	0x45: ["message", "msg:B script:B queued:B", "C", "popup with texts; script runs when the popup is closed"],
@@ -109,7 +109,7 @@ static func decode_args(op: int, args: PackedByteArray) -> Dictionary:
 		var kt: PackedStringArray = f.split(":")
 		var k := kt[0]
 		var t := kt[1]
-		if k != "x" and p + _SIZE[t] <= args.size():
+		if k != "_" and p + _SIZE[t] <= args.size():
 			match t:
 				"B": out[k] = args[p]
 				"h": out[k] = args.decode_s16(p)
@@ -202,3 +202,250 @@ static func actor_anim_name(gd: GameData, block, g: int, i: int, anim: int) -> S
 				var nm := GameData.dict_names(d, d.decode_u32(16) + 8)
 				return nm[0] if not nm.is_empty() else ""
 	return ""
+
+
+# =================================================================================================================
+# Script text: disassemble / assemble (editable form of a block's scripts)
+# =================================================================================================================
+## One op per line: `name(field=value, ...)`. Every argument byte is covered: named fields from OPS, then
+## `_<offset>=v` for bytes the handler never reads and the padding up to the ARG_SIZE record (written only when
+## not 0). Named fields can also be given positionally, in OPS order. `;` starts a comment. A block is
+## `script 1` ... `script n` headers, each followed by its ops.
+
+const HEX_KEYS := ["flag", "flag2", "msg"]
+static var _by_name := {}
+
+
+static func op_by_name(n: String) -> int:
+	if _by_name.is_empty():
+		for op in OPS:
+			_by_name[OPS[op][0]] = op
+	if _by_name.has(n):
+		return _by_name[n]
+	if n.begins_with("op_") and n.length() == 5 and n.substr(3).is_valid_hex_number():
+		return n.substr(3).hex_to_int()
+	return -1
+
+
+## [name, offset, fmt] for every byte of an op's `size`-byte record. Unnamed bytes are "_<offset>" (fmt B).
+static func arg_fields(op: int, size: int) -> Array:
+	var out := []
+	var p := 0
+	if OPS.has(op):
+		for f in OPS[op][1].split(" ", false):
+			var kt: PackedStringArray = f.split(":")
+			var n: int = _SIZE[kt[1]]
+			if p + n > size:
+				break
+			out.append([("_%d" % p) if kt[0] == "_" else kt[0], p, kt[1]])
+			p += n
+	while p < size:
+		out.append(["_%d" % p, p, "B"])
+		p += 1
+	return out
+
+
+## Named (non "_") fields of an op, as "name:fmt" strings.
+static func signature(op: int, size: int) -> String:
+	var parts := []
+	for f in arg_fields(op, size):
+		if not f[0].begins_with("_"):
+			parts.append(f[0])
+	return "%s(%s)" % [op_name(op), ", ".join(parts)]
+
+
+static func _range(fmt: String) -> Vector2i:
+	match fmt:
+		"h": return Vector2i(-0x8000, 0x7FFF)
+		"H": return Vector2i(0, 0xFFFF)
+	return Vector2i(0, 0xFF)
+
+
+## `name(field=value, ...)` of one op (no comment).
+static func op_text(op: int, args: PackedByteArray) -> String:
+	var parts := []
+	for f in arg_fields(op, args.size()):
+		var v: int
+		match f[2]:
+			"h": v = args.decode_s16(f[1])
+			"H": v = args.decode_u16(f[1])
+			_: v = args[f[1]]
+		if f[0].begins_with("_"):
+			if v != 0:
+				parts.append("%s=0x%x" % [f[0], v])
+		elif f[0] in HEX_KEYS:
+			parts.append("%s=0x%x" % [f[0], v])
+		else:
+			parts.append("%s=%d" % [f[0], v])
+	return "%s(%s)" % [op_name(op), ", ".join(parts)]
+
+
+## Comment lines for an op (names, dialogue lines); empty when nothing to add.
+static func op_comment(gd: GameData, op: int, args: PackedByteArray, lang := "en", block = null) -> PackedStringArray:
+	var d := describe(gd, op, args, lang, block)
+	var lines := d.split("\n")
+	var out := PackedStringArray()
+	var at := lines[0].find(")  ; ")
+	if at >= 0:
+		out.append(lines[0].substr(at + 5))
+	for j in range(1, lines.size()):
+		out.append(lines[j].strip_edges())
+	return out
+
+
+## Editable text of a block's scripts. With `gd`, names and dialogue lines are added as comments.
+static func disassemble(scripts: Array, gd: GameData = null, lang := "en", block = null) -> String:
+	var out := PackedStringArray()
+	for k in scripts.size():
+		if k:
+			out.append("")
+		out.append("script %d" % (k + 1))
+		for op in scripts[k]:
+			var line: String = "  " + op_text(op[0], op[1])
+			if gd != null:
+				var c := op_comment(gd, op[0], op[1], lang, block)
+				if not c.is_empty():
+					line += "  ; " + c[0]
+					for j in range(1, c.size()):
+						line += "\n      ; " + c[j]
+			out.append(line)
+	return "\n".join(out) + "\n"
+
+
+static func _parse_int(s: String) -> Variant:
+	s = s.strip_edges()
+	var neg := s.begins_with("-")
+	if neg:
+		s = s.substr(1).strip_edges()
+	var v: int
+	if s.to_lower().begins_with("0x") and s.length() > 2 and s.substr(2).is_valid_hex_number():
+		v = s.substr(2).hex_to_int()
+	elif s != "" and s.is_valid_int() and s[0] != "+" and s[0] != "-":
+		v = s.to_int()
+	else:
+		return null
+	return -v if neg else v
+
+
+## Assemble one op line (no comment). Returns [op, args] or an error string.
+static func assemble_op(line: String, arg_size: PackedByteArray) -> Variant:
+	line = line.strip_edges()
+	var lp := line.find("(")
+	if lp < 0 or not line.ends_with(")"):
+		return "expected name(args...)"
+	var name := line.substr(0, lp).strip_edges()
+	var op := op_by_name(name)
+	if op < 0 or op >= arg_size.size():
+		return "unknown opcode '%s'" % name
+	var size := arg_size[op]
+	var fields := arg_fields(op, size)
+	var named := []
+	var by_name := {}
+	for f in fields:
+		by_name[f[0]] = f
+		if not f[0].begins_with("_"):
+			named.append(f)
+	var vals := {}
+	var inner := line.substr(lp + 1, line.length() - lp - 2).strip_edges()
+	var pos := 0
+	var seen_kw := false
+	if inner != "":
+		for part in inner.split(","):
+			var eq := part.find("=")
+			var key: String
+			var sval: String
+			if eq >= 0:
+				key = part.substr(0, eq).strip_edges()
+				sval = part.substr(eq + 1)
+				seen_kw = true
+				if not by_name.has(key):
+					var known := []
+					for f in named:
+						known.append(f[0])
+					return "%s has no field '%s' (fields: %s)" % [name, key, ", ".join(known) if not known.is_empty() else "none"]
+			else:
+				if seen_kw:
+					return "positional value after a named one"
+				if pos >= named.size():
+					return "%s takes %d values: %s" % [name, named.size(), signature(op, size)]
+				key = named[pos][0]
+				sval = part
+				pos += 1
+			if vals.has(key):
+				return "field '%s' given twice" % key
+			var v = _parse_int(sval)
+			if v == null:
+				return "%s: '%s' is not a number" % [key, sval.strip_edges()]
+			var r := _range(by_name[key][2])
+			if v < r.x or v > r.y:
+				return "%s = %d out of range %d..%d" % [key, v, r.x, r.y]
+			vals[key] = v
+	var missing := []
+	for f in named:
+		if not vals.has(f[0]):
+			missing.append(f[0])
+	if not missing.is_empty():
+		return "missing %s: %s" % [", ".join(missing), signature(op, size)]
+	var args := PackedByteArray()
+	args.resize(size)
+	for f in fields:
+		var v: int = vals.get(f[0], 0)
+		match f[2]:
+			"h": args.encode_s16(f[1], v)
+			"H": args.encode_u16(f[1], v)
+			_: args[f[1]] = v
+	return [op, args]
+
+
+## Text -> {scripts: Array, error: String, line: int (1-based, 0 = none)}.
+static func assemble(text: String, arg_size: PackedByteArray) -> Dictionary:
+	var scripts := []
+	var cur = null
+	var ln := 0
+	for raw in text.split("\n"):
+		ln += 1
+		var line: String = raw
+		var sc := line.find(";")
+		if sc >= 0:
+			line = line.substr(0, sc)
+		line = line.strip_edges()
+		if line == "":
+			continue
+		if line.to_lower().begins_with("script") and line.find("(") < 0:
+			var n = _parse_int(line.substr(6).strip_edges().trim_suffix(":"))
+			if n == null:
+				return {"scripts": [], "error": "expected 'script N'", "line": ln}
+			if n != scripts.size() + 1:
+				return {"scripts": [], "error": "scripts must be numbered 1, 2, 3... in order: expected script %d, got %d" % [scripts.size() + 1, n], "line": ln}
+			if scripts.size() >= 255:
+				return {"scripts": [], "error": "a block holds at most 255 scripts", "line": ln}
+			cur = []
+			scripts.append(cur)
+			continue
+		if cur == null:
+			return {"scripts": [], "error": "op before the first 'script 1' header", "line": ln}
+		var r = assemble_op(line, arg_size)
+		if r is String:
+			return {"scripts": [], "error": r, "line": ln}
+		if cur.size() >= 255:
+			return {"scripts": [], "error": "a script holds at most 255 ops", "line": ln}
+		cur.append(r)
+	return {"scripts": scripts, "error": "", "line": 0}
+
+
+## Group / script references of one op: [[field, kind ("group" | "script"), value]] (1-based, 0 = none).
+static func flow_refs(op: int, args: PackedByteArray) -> Array:
+	var out := []
+	if op == 0x00:
+		return out
+	var a := decode_args(op, args)
+	for k in a:
+		var kind := ""
+		if k == "group" or k == "else_group" or (k.begins_with("group") and k.substr(5).is_valid_int()):
+			kind = "group"
+		elif k in ["script", "else_script", "full_script"] or (k.begins_with("script") and k.substr(6).is_valid_int()) \
+				or (k.length() == 2 and k[0] == "s" and k[1].is_valid_int()):
+			kind = "script"
+		if kind != "":
+			out.append([k, kind, a[k]])
+	return out

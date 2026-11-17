@@ -58,7 +58,13 @@ var tree: Tree
 var tabs: TabContainer
 var details: VBoxContainer
 var palette: VBoxContainer
-var scripts_text: TextEdit
+var script_edit: CodeEdit
+var script_block_opt: OptionButton
+var script_info: Label
+var ops_dlg: AcceptDialog
+var _script_sig := []        # [loc, block, lang, layout hash] of the text in script_edit
+var _script_dirty := false
+var _script_setting := false
 var text_search: LineEdit
 var text_only_edited: CheckBox
 var text_list: ItemList
@@ -106,6 +112,11 @@ func _debug_shot(out: String, args: PackedStringArray) -> void:
 			select(a.trim_prefix("--sel="))
 		if a.begins_with("--tab="):
 			tabs.current_tab = a.trim_prefix("--tab=").to_int()
+		if a.begins_with("--script-line="):
+			tabs.current_tab = 2
+			var ln := a.trim_prefix("--script-line=").to_int()
+			script_edit.set_caret_line(ln)
+			script_edit.scroll_vertical = maxi(0, ln - 3)
 		if a.begins_with("--text="):
 			text_search.text = a.trim_prefix("--text=")
 			_refresh_text_list(true)
@@ -395,11 +406,7 @@ func _build_editor() -> void:
 	side.add_child(tabs)
 	details = _scroll_tab("Selection")
 	palette = _scroll_tab("Add item")
-	scripts_text = TextEdit.new()
-	scripts_text.name = "Scripts"
-	scripts_text.editable = false
-	scripts_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	tabs.add_child(scripts_text)
+	_build_scripts_tab()
 	_build_text_tab()
 
 	var bottom := MarginContainer.new()
@@ -870,20 +877,261 @@ func _on_tree_selected() -> void:
 		view3d.focus(it)
 
 
-func _render_scripts() -> void:
-	var out := ""
-	if lay == null:
-		scripts_text.text = "No layout."
+func _build_scripts_tab() -> void:
+	var m := MarginContainer.new()
+	m.name = "Scripts"
+	for k in ["left", "right", "top", "bottom"]:
+		m.add_theme_constant_override("margin_" + k, 8)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	m.add_child(v)
+	script_block_opt = OptionButton.new()
+	script_block_opt.clip_text = true
+	script_block_opt.custom_minimum_size.x = 120
+	script_block_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	script_block_opt.item_selected.connect(func(_i): _change_script_block())
+	v.add_child(W.hbox([W.label("Block", W.MUTED, false), script_block_opt,
+		W.button("Apply", _apply_scripts, "Assemble the text and save it into the layout (Ctrl+S)"),
+		W.button("Reload", func(): _load_scripts(true), "Drop the unapplied text and show the layout's scripts again")]))
+	v.add_child(W.hbox([
+		W.button("Opcodes…", func(): ops_dlg.popup_centered_ratio(0.7), "Every opcode with its fields"),
+		W.button("Text of line", _script_line_text, "Open the strings of the conversation / message / NPC on the caret line in the Text tab")]))
+	script_edit = CodeEdit.new()
+	script_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	script_edit.custom_minimum_size.y = 200
+	script_edit.gutters_draw_line_numbers = true
+	script_edit.indent_automatic = true
+	script_edit.indent_use_spaces = true
+	script_edit.indent_size = 2
+	script_edit.code_completion_enabled = true
+	script_edit.highlight_current_line = true
+	script_edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	script_edit.syntax_highlighter = _script_highlighter()
+	script_edit.text_changed.connect(_on_script_changed)
+	script_edit.code_completion_requested.connect(_script_completion)
+	script_edit.gui_input.connect(func(e):
+		if e is InputEventKey and e.pressed and e.keycode == KEY_S and e.ctrl_pressed:
+			_apply_scripts()
+			script_edit.accept_event())
+	v.add_child(script_edit)
+	script_info = W.label("", W.MUTED)
+	v.add_child(script_info)
+	v.add_child(W.label("Ctrl+S apply · type 2 letters for opcodes · syntax in Opcodes…", W.MUTED))
+	tabs.add_child(m)
+
+	ops_dlg = AcceptDialog.new()
+	ops_dlg.title = "Script opcodes"
+	var t := TextEdit.new()
+	t.editable = false
+	t.custom_minimum_size = Vector2(700, 420)
+	var lines := PackedStringArray()
+	for h in ["One op per line: name(field=value, ...), values in decimal or 0x hex; named fields can also be given in order.",
+			"'; ...' is a comment: names and dialogue lines are regenerated from the data, edits to them are ignored.",
+			"Scripts are 'script 1', 'script 2'... headers; add one at the end to make a new script.",
+			"group / script = 1-based index in the variant block, 0 = none. (g, i) = item i (1-based) of group g (0-based), g = 255 = the player.",
+			"_N=... are bytes the game never reads (or padding). Apply refuses broken group / script / conversation / location refs.",
+			"Popup ops (goal_start, goal_done, message) run their script when the popup is closed: keep those chains or the player stays locked.", ""]:
+		lines.append(h)
+	var ops := LayScript.OPS.keys()
+	ops.sort()
+	for op in ops:
+		var o: Array = LayScript.OPS[op]
+		lines.append("0x%02X  %s   [%s] %s" % [op, LayScript.signature(op, 20), "confirmed" if o[2] == "C" else "assumed", o[3]])
+	t.text = "\n".join(lines)
+	ops_dlg.add_child(t)
+	add_child(ops_dlg)
+
+
+func _script_highlighter() -> CodeHighlighter:
+	var h := CodeHighlighter.new()
+	h.number_color = Color("#b5cea8")
+	h.symbol_color = Color(0.75, 0.77, 0.82)
+	h.function_color = Color("#4fc3f7")
+	h.member_variable_color = Color(0.85, 0.85, 0.9)
+	h.add_keyword_color("script", Color("#ffb74d"))
+	for op in LayScript.OPS:
+		var o: Array = LayScript.OPS[op]
+		if o[0].begins_with("if_") or o[0] in ["spawn_run", "timer", "random_script", "switch_2f9c"]:
+			h.add_keyword_color(o[0], Color("#ce93d8"))
+		elif o[0] in ["conversation", "phone_conversation", "npc_set_talk", "message"]:
+			h.add_keyword_color(o[0], Color("#81c784"))
+	h.add_color_region(";", "", W.MUTED, true)
+	return h
+
+
+func _script_completion() -> void:
+	var ops := LayScript.OPS.keys()
+	ops.sort()
+	for op in ops:
+		var parts := []
+		for f in LayScript.arg_fields(op, gd.arg_size[op]):
+			if not f[0].begins_with("_"):
+				parts.append(f[0] + "=0")
+		var ins: String = "%s(%s)" % [LayScript.op_name(op), ", ".join(parts)]
+		script_edit.add_code_completion_option(CodeEdit.KIND_FUNCTION, LayScript.signature(op, gd.arg_size[op]), ins)
+	script_edit.update_code_completion_options(false)
+
+
+func _on_script_changed() -> void:
+	if _script_setting:
 		return
-	for b in _visible_blocks():
-		var blk: Layout.Block = lay.blocks[b]
-		out += "== Block %d: %d scripts ==\n" % [b, blk.scripts.size()]
-		for k in blk.scripts.size():
-			out += "script %d\n" % (k + 1)
-			for op in blk.scripts[k]:
-				out += "  " + LayScript.describe(gd, op[0], op[1], lang, blk).replace("\n", "\n  ") + "\n"
-		out += "\n"
-	scripts_text.text = out
+	if not _script_dirty:
+		_script_dirty = true
+		_script_tab_title()
+	# a word of 2+ letters alone before the caret: offer the opcodes
+	var line := script_edit.get_line(script_edit.get_caret_line()).substr(0, script_edit.get_caret_column())
+	var w := line.strip_edges()
+	if w.length() >= 2 and w.is_valid_ascii_identifier() and not w.begins_with("script"):
+		script_edit.request_code_completion()
+
+
+func _script_tab_title() -> void:
+	for i in tabs.get_tab_count():
+		if tabs.get_tab_control(i).name == "Scripts":
+			tabs.set_tab_title(i, "Scripts *" if _script_dirty else "Scripts")
+
+
+func _script_block() -> int:
+	return W.option_value(script_block_opt) if script_block_opt.item_count else -1
+
+
+func _change_script_block() -> void:
+	if _script_dirty and not _script_sig.is_empty():
+		status("Unapplied script edits of block %d dropped" % _script_sig[1])
+	_load_scripts(true)
+
+
+## Show the scripts of the selected block. Unapplied text survives reloads of the same location and block
+## (item edits, language change) unless `force`.
+func _render_scripts() -> void:
+	_load_scripts(false)
+
+
+func _load_scripts(force: bool) -> void:
+	if script_edit == null:
+		return
+	if lay == null:
+		script_block_opt.clear()
+		if _script_dirty and not _script_sig.is_empty():
+			status("Unapplied script edits of location %d dropped" % _script_sig[0])
+		_set_script_text("; this location has no layout")
+		script_edit.editable = false
+		_script_sig = []
+		_script_dirty = false
+		_script_tab_title()
+		script_info.text = ""
+		return
+	# block list: block 0 and the variant shown in the views
+	var want := _script_block()
+	if not _script_sig.is_empty() and _script_sig[0] != loc:
+		want = -1
+	script_block_opt.clear()
+	var vis := _visible_blocks()
+	for b in vis:
+		var n: int = lay.blocks[b].scripts.size()
+		script_block_opt.add_item(("block %d (%d scripts)" % [b, n]) if b else ("block 0 (%d scripts, every variant)" % n), b)
+	var sb: int = want if want in vis else (block if block in vis else 0)
+	script_block_opt.select(vis.find(sb))
+	script_edit.editable = true
+	var sig := [loc, sb, lang, hash(proj.current("layout", proj.nav_of(loc)))]
+	var same_place: bool = not _script_sig.is_empty() and _script_sig[0] == loc and _script_sig[1] == sb
+	if _script_dirty and not force:
+		if same_place:
+			if sig[3] != _script_sig[3]:
+				script_info.text = "The layout changed since this text was loaded (item edits can renumber (g, i) refs): Reload to see the current scripts."
+				script_info.add_theme_color_override("font_color", W.WARN)
+			_script_sig = sig
+			return
+		status("Unapplied script edits of location %d block %d dropped" % [_script_sig[0], _script_sig[1]])
+	if sig == _script_sig and not force and not _script_dirty:
+		return
+	var blk: Layout.Block = lay.blocks[sb]
+	var caret := [script_edit.get_caret_line(), script_edit.get_caret_column(), script_edit.scroll_vertical]
+	_set_script_text(LayScript.disassemble(blk.scripts, gd, lang, blk))
+	if same_place:
+		script_edit.set_caret_line(mini(caret[0], script_edit.get_line_count() - 1))
+		script_edit.set_caret_column(caret[1])
+		script_edit.scroll_vertical = caret[2]
+	_script_sig = sig
+	_script_dirty = false
+	_script_tab_title()
+	var targets: Array = EditProject.target_blocks(lay, sb).map(func(x): return str(x))
+	script_info.text = "Block %d: %d groups, %d scripts. Its group / script numbers point into block %s." % [sb,
+		blk.groups.size(), blk.scripts.size(), ", ".join(targets)]
+	script_info.add_theme_color_override("font_color", W.MUTED)
+
+
+func _set_script_text(t: String) -> void:
+	_script_setting = true
+	script_edit.text = t
+	script_edit.clear_undo_history()
+	_script_setting = false
+
+
+func _script_error(msg: String, line: int) -> void:
+	script_info.text = ("line %d: " % line if line > 0 else "") + msg
+	script_info.add_theme_color_override("font_color", W.WARN)
+	if line > 0:
+		script_edit.set_caret_line(line - 1)
+		script_edit.set_line_background_color(line - 1, Color(0.6, 0.15, 0.15, 0.45))
+		script_edit.center_viewport_to_caret()
+	status("Scripts not applied: " + msg.split("\n")[0])
+
+
+func _apply_scripts() -> void:
+	if lay == null or _script_sig.is_empty():
+		return
+	for i in script_edit.get_line_count():
+		script_edit.set_line_background_color(i, Color(0, 0, 0, 0))
+	var sb: int = _script_sig[1]
+	var r := LayScript.assemble(script_edit.text, gd.arg_size)
+	if r.error != "":
+		_script_error(r.error, r.line)
+		return
+	var e := proj.set_scripts(loc, sb, r.scripts)
+	if e != "":
+		_script_error(e, 0)
+		return
+	_script_dirty = false
+	_reload()
+	status("Scripts of block %d saved (%d scripts)." % [sb, r.scripts.size()])
+
+
+## Text ids used by the op on the caret line (conversation lines, message strings, NPC name), shown in the Text tab.
+func _script_line_text() -> void:
+	var line := script_edit.get_line(script_edit.get_caret_line())
+	var sc := line.find(";")
+	if sc >= 0:
+		line = line.substr(0, sc)
+	if line.strip_edges() == "":
+		status("Put the caret on an op line")
+		return
+	var r = LayScript.assemble_op(line, gd.arg_size)
+	if r is String:
+		status("Caret line: " + r)
+		return
+	var a := LayScript.decode_args(r[0], r[1])
+	var ids := []
+	if a.has("conv") and a.conv < GameData.N_CONV:
+		for l in gd.conversation(a.conv):
+			ids.append(l[0])
+	elif a.has("msg"):
+		var m := gd.message(a.msg)
+		ids.append(m[0])
+		if m[1] >= 0:
+			ids.append(m[1])
+	elif a.has("npc") and a.npc < 0x3F:
+		ids.append(GameData.NPC_NAME_BASE + a.npc)
+	if ids.is_empty():
+		status("This op uses no text")
+		return
+	for i in tabs.get_tab_count():
+		if tabs.get_tab_control(i).name == "Text":
+			tabs.current_tab = i
+	text_search.text = "0x%x" % ids[0]
+	_refresh_text_list(true)
+	_select_text(ids[0])
+	status("Text ids of this line: " + ", ".join(ids.map(func(x): return "0x%04X" % x)) + " (type one in the Text tab search)")
 
 
 # =================================================================================================================

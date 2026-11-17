@@ -48,6 +48,7 @@ const MAX_WAYPOINTS := 32     # Nav_AddWaypoint list at world+0x6C
 var entries := []   # PackedByteArray(16) each
 var blocks := []    # Block
 var error := ""
+var write_error := ""   # set by write() when a block outgrows its u16 size / offsets
 
 
 class Item:
@@ -305,6 +306,7 @@ static func _write_scripts(scripts: Array, start: int) -> PackedByteArray:
 
 
 func write() -> PackedByteArray:
+	write_error = ""
 	var out := PackedByteArray([blocks.size(), entries.size(), 0, 0])
 	out.encode_u16(2, 16 * entries.size())
 	for e in entries:
@@ -330,6 +332,8 @@ func write() -> PackedByteArray:
 		body.append_array(_write_scripts(b.scripts, off_scripts))
 		var delta: int = body.size() - b.tables_at
 		body.append_array(b.tables)
+		if 0x10 + body.size() > 0xFFFF:
+			write_error = "block %d would be %d bytes, over the u16 block size" % [blocks.find(b), 0x10 + body.size()]
 		var bh := PackedByteArray()
 		bh.resize(0x10)
 		bh.encode_u16(0, 0x10 + body.size())

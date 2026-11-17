@@ -91,6 +91,7 @@ Verified in RAM on the 6 objects of location 5 (−180 → −12867, 90 → 6433
 Full opcode table with argument fields, status and evidence: **`tools/layscript.py` (`OPS`)**. Disassembler:
 `python tools/layscript.py <location> [--lang fr]` (conversation lines and NPC names inlined), usage statistics:
 `--stats`. Handler table 0x0211E4F0; handlers renamed `NavOpXX_*` in Ghidra (docs/ghidra.md part 5).
+Editable text form (Godot editor Scripts tab): `godot/scripts/core/layscript.gd` `disassemble` / `assemble`, byte-identical on all 659 scripts; `_<offset>` names bytes no handler reads (and the ARG_SIZE padding).
 
 Conventions (code): groups and scripts are **1-based indices in the selected variant block, 0 = none**; an
 actor is `(g, i)` = item **i (1-based, 0 = none)** of group **g (0-based**, i.e. the group spawned by
