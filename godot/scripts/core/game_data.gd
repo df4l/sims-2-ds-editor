@@ -30,8 +30,17 @@ const N_PROPS := 331
 
 const ARG_SIZE_TABLE := 0x021229AC   # script opcode -> arg byte count (0x52 opcodes)
 const CONV_TABLE := 0x0211F16C       # conversation id -> {u32 lines*, u8 count}; line {u16 text, u8 speaker, u8 0}
-const N_CONV := 216
+const N_CONV := 216                  # in the original table; a table moved by the editor has TABLE_MAX entries
+const CONV_LITERALS := [0x0204209C, 0x020412FC]   # ARM9 literals holding the table base (NavOp17, NavOp2A)
+const CONV_OV := 15                  # overlay holding the third literal (State0E_ShowNextLine)
+const CONV_OV_LITERAL := 0x0214A144
+const CONV_NONE := 0xD8              # "no conversation" for script op 0x19 (Npc_SetTalkConversation): never an id
+const CONV_STATE21 := [3, 0x23, 0xA6]   # ops 0x17 / 0x2A send these to state 0x21: only line 0's text is used
 const MSG_TABLE := 0x0211E8C0        # message id -> {u32 text id, s32 text id 2 or -1}
+const N_MSG := 26                    # in the original table (0x0211E990 is other data)
+const MSG_LITERAL := 0x02040720      # the only reference (NavOp45_Message)
+const MSG_UNUSED := 0xFFFFFFFF       # text id of the unused records of a table moved by the editor
+const TABLE_MAX := 256               # conversation / message ids are u8 in the script ops
 const NPC_NAME_BASE := 0x143
 
 # object info table (Info_Npc / Info_Prop): 18-byte records
@@ -56,6 +65,10 @@ var locations := []      # dicts
 var arg_size := PackedByteArray()
 var _banks := {}
 var _names := {}
+var conv_override = null   # Array (see conversations()) set by EditProject when the conversations are edited
+var msg_override = null    # Array of [text, text2] set by EditProject
+var _rom_convs = null
+var _rom_msgs = null
 
 
 func open(path: String) -> bool:
@@ -216,20 +229,83 @@ func speaker_name(s: int, lang := "en") -> String:
 	return text(NPC_NAME_BASE + s, lang)
 
 
-## [[text id, speaker]] of a conversation.
-func conversation(cid: int) -> Array:
-	var p := u32(CONV_TABLE + 8 * cid)
-	var c := u32(CONV_TABLE + 8 * cid + 4) & 0xFF
+## Base of the conversation table the game uses (moved to the ARM9 extension by an earlier export, or not).
+func conv_table() -> int:
+	return u32(CONV_LITERALS[0])
+
+
+## Records of the ROM's conversation table: [{ptr, count}].
+func rom_conv_records() -> Array:
+	var t := conv_table()
+	var n := N_CONV if t == CONV_TABLE else TABLE_MAX
 	var out := []
-	if p == 0:
-		return out
-	for k in c:
-		out.append([u16(p + 4 * k), u8(p + 4 * k + 2)])
+	for cid in n:
+		out.append({"ptr": u32(t + 8 * cid), "count": u8(t + 8 * cid + 4)})
 	return out
 
 
+## The ROM's conversations: one entry per id, null (no record) or [[text id, speaker], ...].
+func rom_conversations() -> Array:
+	if _rom_convs == null:
+		_rom_convs = []
+		for r in rom_conv_records():
+			if r.ptr == 0 or r.ptr < BASE or r.ptr + 4 * r.count > BASE + a9.size():
+				_rom_convs.append(null)
+				continue
+			var lines := []
+			for k in r.count:
+				lines.append([u16(r.ptr + 4 * k), u8(r.ptr + 4 * k + 2)])
+			_rom_convs.append(lines)
+	return _rom_convs
+
+
+func conversations() -> Array:
+	return conv_override if conv_override != null else rom_conversations()
+
+
+func n_conv() -> int:
+	return conversations().size()
+
+
+func conv_exists(cid: int) -> bool:
+	var cs := conversations()
+	return cid >= 0 and cid < cs.size() and cs[cid] != null
+
+
+## [[text id, speaker]] of a conversation ([] when it does not exist).
+func conversation(cid: int) -> Array:
+	return conversations()[cid] if conv_exists(cid) else []
+
+
+func msg_table() -> int:
+	return u32(MSG_LITERAL)
+
+
+## The ROM's messages: [[text id, second text id or -1]].
+func rom_messages() -> Array:
+	if _rom_msgs == null:
+		_rom_msgs = []
+		var t := msg_table()
+		var n := N_MSG if t == MSG_TABLE else TABLE_MAX
+		for mid in n:
+			if t != MSG_TABLE and u32(t + 8 * mid) == MSG_UNUSED:
+				break
+			_rom_msgs.append([u32(t + 8 * mid), s32(t + 8 * mid + 4)])
+	return _rom_msgs
+
+
+func messages() -> Array:
+	return msg_override if msg_override != null else rom_messages()
+
+
+func n_msg() -> int:
+	return messages().size()
+
+
+## [text id, second text id or -1] ([] when it does not exist).
 func message(mid: int) -> Array:
-	return [u32(MSG_TABLE + 8 * mid), s32(MSG_TABLE + 8 * mid + 4)]
+	var ms := messages()
+	return ms[mid] if mid >= 0 and mid < ms.size() else []
 
 
 # --- object info (icons, in-game names) -----------------------------------------------------------------------

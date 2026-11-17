@@ -78,11 +78,38 @@ String length: `Txt_GetString` decodes into a 0x400-byte buffer, so the editor r
   talking to an NPC (op 0x19 sets which conversation an NPC offers).
   When the last line is closed: spawn group `arg1`, run script `arg2`, set story flag (0x58 = none).
   Conversations 3, 0x23, 0xA6 go to state 0x21 (overlay 11) instead.
+  **References to the table — CONFIRMED (scan of every aligned word of arm9 + the 19 overlays, 2026-11-17)**: only the
+  base address, in 3 literal pools: 0x0204209C (NavOp17_Conversation), 0x020412FC (NavOp2A_PhoneConversation) and
+  ov15 0x0214A144 (State0E_ShowNextLine; overlay 15 is BLZ-compressed in the ROM). The line arrays (0x0211E9AC ..
+  0x0211F16C) are only reached through the table; one array (0x0211E9F4, 1 line) is shared by 6 conversations.
+  The conversation id is a u8 in the script ops and a u16 in the state; `Npc_SetTalkConversation` treats **0xD8 as
+  "none"**, so 0xD8 must never be a real id. Conversation 0xBC has a fixed speaker (prop 0x1B name / portrait,
+  text DAT_0214a160) whatever its lines say. State 0xE reads `lines[0].speaker` before checking the count: a
+  conversation needs >= 1 line.
+- **Editing (Godot editor, `EditProject` conversations section)**: a changed conversation is rewritten in place when
+  its array is not shared and does not grow, otherwise appended to the ARM9 extension (docs/formats/arm9.md). New
+  ids (217..255, 216 = 0xD8 skipped) move the table to the extension as **256 records** and rewrite the 3 literals;
+  overlay 15 is then stored decompressed (overlay table flag cleared). A moved table is recognised on reopening
+  because the literal no longer points at 0x0211F16C. CONFIRMED in the emulator (§5).
   CONFIRMED in the emulator: conversation 0 = lines 0x49F, 0x4A0, 0x4A1… spoken by NPC 22 in that order.
 - **Messages** (popups, `Ui_ShowMessageBox` 0x0205871c, script op 0x45, goals): table **0x0211E8C0**,
-  `{u32 text id, s32 second text id or -1}`.
+  `{u32 text id, s32 second text id or -1}`, **26 records** (0x0211E990 is other data, referenced by FUN_02059088).
+  Only reference: literal 0x02040720 (NavOp45_Message). Op 0x45 `queued=0` opens the popup at once, `queued=1`
+  stores the two texts in G+0xE38 for later. The `script` argument (UI+0x18) runs when the popup is closed.
+  CONFIRMED in the emulator: run from a conversation's end script, `queued=0` sets UI+0x18 but no popup ever shows
+  (so its script never runs); `queued=1` shows it once back on the map. The game itself uses `queued=1` in 20 of 22 ops.
+  Editor: changed in place; new ids move the table to the extension as 256 records (unused text id 0xFFFFFFFF).
+- **New strings**: `Txt_DecodeString` does not bound-check the id (offset table at bank + u32 0, count implicit), so
+  strings can be appended. The editor appends the same text to the 6 banks (ids stay aligned across languages).
 
 ## 5. Evidence log
+- **New conversation / message / strings — CONFIRMED (2026-11-17)**, `build/conv_test/` (exported by
+  `godot/tests/test_conversations.gd`, fresh boot, new game): location 5 block 1 script 3 plays the NEW conversation
+  217 (table moved to 0x02152F00, overlay 15 literal patched): line 1 new string 0xC37 by Jebediah (name + portrait),
+  line 2 new string 0xC38 by the player (box "???" with a "?" portrait, the unnamed player of the intro), line 3 the
+  original 0x4A1; its end script runs a new script that opens the NEW message 26 (new string 0xC39, `queued=1`);
+  closing it runs script 25 and the intro goes on with the next original conversation ("Shoot, kid…").
+  Screenshots `conv217_line1.png`, `conv217_line2_player.png`, `msg26_queued.png`, `after_msg_script25.png`.
 - `text.py verify`: 6/6 banks byte-identical after decode + re-encode; 3127 strings each.
 - Emulator (savestate `first_ingame`, ROM build/sims2_rebuilt.nds): the 22 words of the English bank holding
   lines 0x49F / 0x4A0 were replaced in RAM by `text.py`-encoded strings (same slots, zero-padded), then a warp

@@ -939,3 +939,26 @@ Godot is now the only editor. Low-level tools for adding new content rather than
 - **UI**: Scripts tab is now an editor (CodeEdit, highlighting, opcode completion, Ctrl+S apply, error line
   highlighted, unapplied text kept across item edits, "Text of line" opens the strings of a conversation / message
   in the Text tab, Opcodes… reference).
+
+
+## 2026-11-17 (later) — Conversation and message tables in the Godot editor
+
+- **Hypothesis**: the conversation table can grow if every pointer to it is found. **Test**: Ghidra script scanning
+  every aligned word of arm9 + overlays 0..18 for values in 0x0211F16C..+0x6C0, and a Python scan for words into the
+  line arrays. **Result**: 3 literals, all to the base (2 arm9, 1 in overlay 15); line arrays reached only through
+  the table; one array shared by 6 ids. Message table: 1 literal (NavOp45_Message), 26 records. Npc_SetTalkConversation
+  uses 0xD8 as "none". Txt_DecodeString has no id bound → strings can be appended. Details: docs/formats/text.md §4.
+- **Implementation**: `GameData` reads the tables through the literals (moved tables = 256 records);
+  `EditProject` conversations section (set / add / delete conversation, set / add / delete message, `add_string` to
+  the 6 banks as one undo step, users of an id across all layouts, checks: >= 1 line, text ids exist, speaker <= 0x40);
+  export through `Arm9Mod` (in place / extension / moved table) + `NdsRom` overlay support (decompress, patch,
+  store uncompressed, overlay table replaced). Script checks now use the real conversation / message counts.
+  UI: Dialogue tab (conversations / messages list with search, line rows: speaker, text id, order, preview,
+  "Text" link; new string from a text box; usage list; notes for ids 3 / 0x23 / 0xA6 / 0xBC).
+- **Tests**: `test_conversations.gd` (read-back 216 / 501 lines / 26 messages, in place vs extension vs shared array,
+  refusals, new strings in 6 banks + undo, new ids 217 / 218, table move + overlay 15 patch, export → reopen,
+  second export on top of the first: table not moved again) 0 failures; `test_dialogue_ui.gd` 0 failures;
+  test_core / edits / foundations / text / scripts still 0 failures.
+- **Emulator, CONFIRMED**: new conversation 217 + new message 26 + 3 new strings play at a new game
+  (docs/formats/text.md §5). First try used `message(…, queued=0)` from the conversation's end script: UI+0x18 was
+  set to 25 but no popup appeared and the intro stalled; with `queued=1` it works (the game's own choice in 20/22 ops).

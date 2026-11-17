@@ -147,17 +147,52 @@ func arm9_decompressed() -> PackedByteArray:
 	return dec
 
 
+# --- ARM9 overlays ----------------------------------------------------------------------------------------------
+## Overlay table (0x50) record, 32 bytes: u32 id, ram address, ram size, bss size, sinit start, sinit end, file id,
+## u32 bits 0-23 stored size, bit 24 = BLZ-compressed.
+
+func overlay9_table() -> PackedByteArray:
+	return data.slice(u32(0x50), u32(0x50) + u32(0x54))
+
+
+func overlay9_count() -> int:
+	return u32(0x54) / 32
+
+
+## {ram, ram_size, file, compressed} of ARM9 overlay i.
+func overlay9_info(i: int) -> Dictionary:
+	var o := u32(0x50) + 32 * i
+	return {"ram": data.decode_u32(o + 4), "ram_size": data.decode_u32(o + 8), "file": data.decode_u32(o + 0x18),
+		"compressed": (data.decode_u32(o + 0x1C) >> 24) & 1 == 1}
+
+
+## Overlay i as loaded in RAM (decompressed). Empty on error (see `error`).
+func overlay9_code(i: int) -> PackedByteArray:
+	var inf := overlay9_info(i)
+	var d := read_file(inf.file)
+	if inf.compressed:
+		d = Blz.decompress(d)
+		if d.is_empty():
+			error = "overlay %d: BLZ decompression failed: %s" % [i, Blz.last_error]
+			return d
+	if d.size() != inf.ram_size:
+		error = "overlay %d: %d bytes, the overlay table says %d" % [i, d.size(), inf.ram_size]
+		return PackedByteArray()
+	return d
+
+
 # --- rebuild ---------------------------------------------------------------------------------------------------
 
 ## New ROM image. files: {file id: PackedByteArray} replaced NitroFS files. arm9: replacement ARM9 binary
-## (uncompressed, compressed_static_end already 0) or an empty array to keep the stored one.
+## (uncompressed, compressed_static_end already 0) or an empty array to keep the stored one. ovt9: replacement ARM9
+## overlay table (same size) or empty.
 ## Every region (ARM9, ARM7, overlay tables, FNT, FAT, banner, files) keeps its original order; a region that grows
 ## pushes the following ones (gaps are kept, shifts are multiples of 0x200). Unchanged input -> identical output.
 ## Sets `last_map`: [[new offset, old offset, size]] of the ranges copied unchanged from this image (patch export).
 var last_map := []
 
 
-func rebuild(files: Dictionary, arm9 := PackedByteArray()) -> PackedByteArray:
+func rebuild(files: Dictionary, arm9 := PackedByteArray(), ovt9 := PackedByteArray()) -> PackedByteArray:
 	var regions := []   # {kind, id, start, size, bytes (new content or null)}
 	var a9_off := u32(0x20)
 	var a9_size := u32(0x2C)
@@ -173,7 +208,10 @@ func rebuild(files: Dictionary, arm9 := PackedByteArray()) -> PackedByteArray:
 	regions.append({"kind": "arm9", "start": a9_off, "size": a9_size + footer, "bytes": a9_new})
 	for k in [["arm7", 0x30, 0x3C], ["ovt9", 0x50, 0x54], ["ovt7", 0x58, 0x5C], ["fnt", 0x40, 0x44], ["fat", 0x48, 0x4C]]:
 		if u32(k[2]) > 0:
-			regions.append({"kind": k[0], "start": u32(k[1]), "size": u32(k[2]), "bytes": null})
+			var nb = null
+			if k[0] == "ovt9" and not ovt9.is_empty():
+				nb = ovt9
+			regions.append({"kind": k[0], "start": u32(k[1]), "size": u32(k[2]), "bytes": nb})
 	if u32(0x68) != 0:
 		var ver := data.decode_u16(u32(0x68))
 		var bsize: int = {1: 0x840, 2: 0x940, 3: 0xA40, 0x103: 0x23C0}.get(ver, 0x840)

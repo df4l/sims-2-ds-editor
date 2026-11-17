@@ -75,5 +75,7 @@ godot --headless --path . --script res://tests/test_edits.gd -- sims2.nds out.nd
 godot --headless --path . --script res://tests/test_foundations.gd -- sims2.nds out_dir [ext_kib]   # ARM9 extension, rom.bin entries, BPS
 godot --headless --path . --script res://tests/test_text.gd -- sims2.nds out_dir   # text banks: round-trip, edits, export
 godot --headless --path . --script res://tests/test_scripts.gd -- sims2.nds out_dir   # layout scripts: text round-trip, edits, export
-godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query]   # UI screenshot
+godot --headless --path . --script res://tests/test_conversations.gd -- sims2.nds out_dir   # conversation / message tables, new strings, export
+godot --path . --script res://tests/test_dialogue_ui.gd -- sims2.nds   # Dialogue tab smoke test (needs a window)
+godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]]   # UI screenshot
 ```

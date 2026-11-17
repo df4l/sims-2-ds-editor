@@ -158,13 +158,14 @@ static func describe(gd: GameData, op: int, args: PackedByteArray, lang := "en",
 	var s := "%s(%s)" % [name, ", ".join(parts)]
 	if a.has("npc"):
 		s += "  ; " + gd.npc_name(a.npc, lang)
-	if name in ["conversation", "phone_conversation", "npc_set_talk"] and a.conv < GameData.N_CONV:
+	if name in ["conversation", "phone_conversation", "npc_set_talk"]:
 		for line in gd.conversation(a.conv):
 			s += "\n      | %s: %s" % [gd.speaker_name(line[1], lang), gd.text(line[0], lang).replace("\n", " ")]
 	if name == "message":
 		var m := gd.message(a.msg)
-		s += "\n      | " + gd.text(m[0], lang)
-		if m[1] >= 0:
+		if not m.is_empty():
+			s += "\n      | " + gd.text(m[0], lang)
+		if not m.is_empty() and m[1] >= 0:
 			s += " / " + gd.text(m[1], lang)
 	if name == "actor_anim" and block != null:
 		var n := actor_anim_name(gd, block, a.g, a.i, a.anim)

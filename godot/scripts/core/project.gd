@@ -1,6 +1,7 @@
 class_name EditProject
 extends RefCounted
-## Edits on top of the opened ROM: layout / BSP / text bank rom.bin entries and the default hotel room furniture (arm9 table),
+## Edits on top of the opened ROM: layout / BSP / text bank rom.bin entries, the default hotel room furniture and the
+## conversation / message tables (arm9),
 ## with undo, autosave and ROM export. Port of the former Python editor (editor/project.py, removed).
 ##
 ## Edits are saved as soon as they are made under user://projects/<sha1 of the ROM>/ (one file per edited entry,
@@ -12,13 +13,14 @@ extends RefCounted
 ## from another block might mean this item (ambiguous).
 ## Every mutating function returns "" on success or the reason it was refused (nothing changed then).
 
-const KINDS := ["layout", "bsp", "furniture", "text"]
+const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg"]
 const UNDO_MAX := 100
 
 var gd: GameData
 var furn: RoomFurn
 var edits := {}       # "kind:entry" -> PackedByteArray
-var undo_stack := []  # [key, previous bytes or null (= original)]
+var undo_stack := []  # one entry per edit: [[key, previous bytes or null (= original)], ...]
+var _group := false   # while true, _store adds to the last undo entry (one edit touching several keys)
 var dir := ""
 var last_index := -1
 
@@ -54,11 +56,14 @@ func _load_saved() -> void:
 	for l in GameData.BANKS:
 		if is_edited("text", GameData.BANKS[l]):
 			gd.set_bank_bytes(l, edits[key("text", GameData.BANKS[l])])
+	_sync_tables()
 
 
 func original(kind: String, entry: int) -> PackedByteArray:
 	match kind:
 		"furniture": return furn.defaults_bytes(entry)
+		"conv": return encode_convs(gd.rom_conversations())
+		"msg": return encode_msgs(gd.rom_messages())
 		"layout", "text": return gd.rombin.raw_entry(entry)
 		_: return gd.rombin.data(entry)
 
@@ -94,11 +99,16 @@ func _write(k: String, data) -> void:
 		for l in GameData.BANKS:
 			if GameData.BANKS[l] == e:
 				gd.set_bank_bytes(l, edits.get(k, PackedByteArray()))
+	if k.begins_with("conv:") or k.begins_with("msg:"):
+		_sync_tables()
 
 
 func _store(kind: String, entry: int, data: PackedByteArray) -> void:
 	var k := key(kind, entry)
-	undo_stack.append([k, edits.get(k)])
+	if _group and not undo_stack.is_empty():
+		undo_stack[-1].append([k, edits.get(k)])
+	else:
+		undo_stack.append([[k, edits.get(k)]])
 	while undo_stack.size() > UNDO_MAX:
 		undo_stack.pop_front()
 	_write(k, null if data == original(kind, entry) else data)
@@ -108,7 +118,8 @@ func undo() -> String:
 	if undo_stack.is_empty():
 		return "nothing to undo"
 	var e: Array = undo_stack.pop_back()
-	_write(e[0], e[1])
+	for i in range(e.size() - 1, -1, -1):
+		_write(e[i][0], e[i][1])
 	return ""
 
 
@@ -432,8 +443,10 @@ func script_ref_errors(lay: Layout) -> Array:
 				for r in LayScript.flow_refs(op, s[k][1]):
 					refs.append([where + " " + r[0], r[1], r[2]])
 				var a := LayScript.decode_args(op, s[k][1])
-				if a.has("conv") and a.conv >= GameData.N_CONV and not (op == 0x19 and a.conv == 0xD8):
-					out.append("%s: conversation %d does not exist (0..%d)" % [where, a.conv, GameData.N_CONV - 1])
+				if a.has("conv") and not gd.conv_exists(a.conv) and not (op == 0x19 and a.conv == GameData.CONV_NONE):
+					out.append("%s: conversation %d does not exist" % [where, a.conv])
+				if a.has("msg") and a.msg >= gd.n_msg():
+					out.append("%s: message %d does not exist (0..%d)" % [where, a.msg, gd.n_msg() - 1])
 				if a.has("location") and a.location >= GameData.LOC_COUNT:
 					out.append("%s: location %d does not exist (0..%d)" % [where, a.location, GameData.LOC_COUNT - 1])
 		for g in blk.groups.size():
@@ -621,6 +634,353 @@ func set_text(lang: String, id: int, t: String) -> String:
 	return ""
 
 
+# --- conversations and messages -----------------------------------------------------------------------------------
+## Stored as one edit each ("conv:0", "msg:0"), the whole table in this form:
+##   conv: u16 n | per id: u8 present, u8 line count, lines {u16 text id, u8 speaker, u8 0}
+##   msg:  u16 n | per id: u32 text id, s32 second text id or -1
+## Export (_apply_convs / _apply_msgs): a changed conversation is rewritten in place when its line array is not shared
+## and does not grow, else appended to the ARM9 extension. New ids move the whole table to the extension
+## (TABLE_MAX records) and rewrite every pointer to its base (conversations: 2 ARM9 literals + 1 in overlay 15;
+## messages: 1 ARM9 literal). docs/formats/text.md §4.
+
+const MAX_LINES := 255   # u8 count
+
+
+static func encode_convs(cs: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(2)
+	out.encode_u16(0, cs.size())
+	for c in cs:
+		if c == null:
+			out.append_array(PackedByteArray([0, 0]))
+			continue
+		out.append_array(PackedByteArray([1, c.size()]))
+		for l in c:
+			out.append_array(PackedByteArray([l[0] & 0xFF, l[0] >> 8, l[1], 0]))
+	return out
+
+
+static func decode_convs(d: PackedByteArray) -> Array:
+	var out := []
+	var o := 2
+	for _cid in d.decode_u16(0):
+		var present := d[o]
+		var n := d[o + 1]
+		o += 2
+		if not present:
+			out.append(null)
+			continue
+		var lines := []
+		for k in n:
+			lines.append([d.decode_u16(o), d[o + 2]])
+			o += 4
+		out.append(lines)
+	return out
+
+
+static func encode_msgs(ms: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(2 + 8 * ms.size())
+	out.encode_u16(0, ms.size())
+	for i in ms.size():
+		out.encode_u32(2 + 8 * i, ms[i][0])
+		out.encode_s32(6 + 8 * i, ms[i][1])
+	return out
+
+
+static func decode_msgs(d: PackedByteArray) -> Array:
+	var out := []
+	for i in d.decode_u16(0):
+		out.append([d.decode_u32(2 + 8 * i), d.decode_s32(6 + 8 * i)])
+	return out
+
+
+func _sync_tables() -> void:
+	gd.conv_override = decode_convs(edits[key("conv", 0)]) if is_edited("conv", 0) else null
+	gd.msg_override = decode_msgs(edits[key("msg", 0)]) if is_edited("msg", 0) else null
+
+
+func conversations() -> Array:
+	return gd.conversations()
+
+
+func text_count() -> int:
+	return gd.bank("en").count()
+
+
+func _check_lines(lines: Array) -> String:
+	if lines.is_empty():
+		return "a conversation needs at least one line (the game reads line 0 before checking the count)"
+	if lines.size() > MAX_LINES:
+		return "at most %d lines" % MAX_LINES
+	for k in lines.size():
+		var l: Array = lines[k]
+		if l.size() != 2:
+			return "line %d: [text id, speaker] expected" % (k + 1)
+		if l[0] < 0 or l[0] >= text_count():
+			return "line %d: text 0x%X does not exist (0..0x%X)" % [k + 1, l[0], text_count() - 1]
+		if l[1] < 0 or l[1] > 0x40:
+			return "line %d: speaker %d: must be an NPC id 0..62, 63 (narrator) or 64 (player)" % [k + 1, l[1]]
+	return ""
+
+
+func _store_convs(cs: Array) -> void:
+	_store("conv", 0, encode_convs(cs))
+
+
+func is_new_conv(cid: int) -> bool:
+	var o := gd.rom_conversations()
+	return not (cid < o.size() and o[cid] != null)
+
+
+## Replace the lines ([[text id, speaker], ...]) of conversation cid.
+func set_conversation(cid: int, lines: Array) -> String:
+	var cs := conversations().duplicate(true)
+	if cid < 0 or cid >= cs.size() or cs[cid] == null:
+		return "no conversation %d" % cid
+	var e := _check_lines(lines)
+	if e != "":
+		return e
+	cs[cid] = lines.duplicate(true)
+	_store_convs(cs)
+	return ""
+
+
+## Id for a new conversation: after the original ones, never CONV_NONE (-1 when none is left).
+func free_conv_id() -> int:
+	var cs := conversations()
+	for cid in range(GameData.N_CONV, GameData.TABLE_MAX):
+		if cid != GameData.CONV_NONE and (cid >= cs.size() or cs[cid] == null):
+			return cid
+	return -1
+
+
+## New conversation; its id goes to last_index.
+func add_conversation(lines: Array) -> String:
+	var e := _check_lines(lines)
+	if e != "":
+		return e
+	var cid := free_conv_id()
+	if cid < 0:
+		return "no free conversation id left (ids are u8; 0x%X means none)" % GameData.CONV_NONE
+	var cs := conversations().duplicate(true)
+	while cs.size() < GameData.TABLE_MAX:
+		cs.append(null)
+	cs[cid] = lines.duplicate(true)
+	_store_convs(cs)
+	last_index = cid
+	return ""
+
+
+## Script ops of every layout using conversation cid: [{location, block, script, op, name}].
+func conv_users(cid: int) -> Array:
+	return _table_users("conv", cid)
+
+
+func msg_users(mid: int) -> Array:
+	return _table_users("msg", mid)
+
+
+func _table_users(field: String, v: int) -> Array:
+	var out := []
+	var seen := {}
+	for L in gd.locations:
+		var nav: int = L.nav
+		if nav == GameData.NONE or seen.has(nav):
+			continue
+		seen[nav] = true
+		var lay := Layout.parse(current("layout", nav), gd.arg_size)
+		if lay.error != "":
+			continue
+		for b in lay.blocks.size():
+			var blk: Layout.Block = lay.blocks[b]
+			for si in blk.scripts.size():
+				var s: Array = blk.scripts[si]
+				for k in s.size():
+					var a := LayScript.decode_args(s[k][0], s[k][1])
+					if a.get(field) == v:
+						out.append({"location": L.location, "block": b, "script": si + 1, "op": k + 1,
+							"name": LayScript.op_name(s[k][0])})
+	return out
+
+
+## Remove a conversation added in the editor (the game's own ones may be used from code: change their lines instead).
+func delete_conversation(cid: int) -> String:
+	var cs := conversations().duplicate(true)
+	if cid < 0 or cid >= cs.size() or cs[cid] == null:
+		return "no conversation %d" % cid
+	if not is_new_conv(cid):
+		return "conversation %d comes from the game: change its lines instead" % cid
+	var u := conv_users(cid)
+	if not u.is_empty():
+		return "conversation %d is used by location %d block %d script %d (%s)" % [cid, u[0].location, u[0].block, u[0].script, u[0].name]
+	cs[cid] = null
+	while cs.size() > gd.rom_conversations().size() and cs[-1] == null:
+		cs.pop_back()
+	_store_convs(cs)
+	return ""
+
+
+func _check_msg(t1: int, t2: int) -> String:
+	if t1 < 0 or t1 >= text_count():
+		return "text 0x%X does not exist (0..0x%X)" % [t1, text_count() - 1]
+	if t2 != -1 and (t2 < 0 or t2 >= text_count()):
+		return "second text 0x%X does not exist (-1 = none)" % t2
+	return ""
+
+
+func set_message(mid: int, t1: int, t2: int) -> String:
+	var ms := gd.messages().duplicate(true)
+	if mid < 0 or mid >= ms.size():
+		return "no message %d" % mid
+	var e := _check_msg(t1, t2)
+	if e != "":
+		return e
+	ms[mid] = [t1, t2]
+	_store("msg", 0, encode_msgs(ms))
+	return ""
+
+
+## New message; its id goes to last_index.
+func add_message(t1: int, t2: int) -> String:
+	var ms := gd.messages().duplicate(true)
+	if ms.size() >= GameData.TABLE_MAX:
+		return "no free message id left (ids are u8)"
+	var e := _check_msg(t1, t2)
+	if e != "":
+		return e
+	ms.append([t1, t2])
+	_store("msg", 0, encode_msgs(ms))
+	last_index = ms.size() - 1
+	return ""
+
+
+## Remove the last message when the editor added it and no script uses it (ids stay contiguous).
+func delete_message(mid: int) -> String:
+	var ms := gd.messages().duplicate(true)
+	if mid != ms.size() - 1 or mid < gd.rom_messages().size():
+		return "only the last message added in the editor can be removed (ids must stay contiguous)"
+	var u := msg_users(mid)
+	if not u.is_empty():
+		return "message %d is used by location %d block %d script %d" % [mid, u[0].location, u[0].block, u[0].script]
+	ms.pop_back()
+	_store("msg", 0, encode_msgs(ms))
+	return ""
+
+
+static func _line_bytes(lines: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	for l in lines:
+		out.append_array(PackedByteArray([l[0] & 0xFF, l[0] >> 8, l[1], 0]))
+	return out
+
+
+func _apply_convs(m: Arm9Mod) -> String:
+	var recs := gd.rom_conv_records()
+	var orig := gd.rom_conversations()
+	var cur := conversations()
+	var t0 := gd.conv_table()
+	var t := t0
+	if cur.size() > recs.size():
+		for lit in GameData.CONV_LITERALS:
+			if m.read_u32(lit) != t0:
+				return "ARM9 word 0x%08X is not the conversation table base: unsupported game version" % lit
+		t = m.alloc(8 * GameData.TABLE_MAX)   # always TABLE_MAX: GameData reads that many from a moved table
+		if t == 0:
+			return m.error
+		m.write(t, m.read(t0, 8 * recs.size()))
+		for lit in GameData.CONV_LITERALS:
+			m.write_u32(lit, t)
+		ovl_patches[GameData.CONV_OV] = {GameData.CONV_OV_LITERAL: [t0, t]}
+	var uses := {}
+	for r in recs:
+		uses[r.ptr] = uses.get(r.ptr, 0) + 1
+	for cid in cur.size():
+		var o = orig[cid] if cid < orig.size() else null
+		if cur[cid] == o:
+			continue
+		var rec := PackedByteArray()
+		rec.resize(8)
+		if cur[cid] != null:
+			var lines := _line_bytes(cur[cid])
+			var p := 0
+			if o != null and uses[recs[cid].ptr] == 1 and cur[cid].size() <= o.size():
+				p = recs[cid].ptr
+				var e := m.write(p, lines)
+				if e != "":
+					return e
+			else:
+				p = m.add(lines)
+				if p == 0:
+					return m.error
+			rec.encode_u32(0, p)
+			rec[4] = cur[cid].size()
+		var e2 := m.write(t + 8 * cid, rec)
+		if e2 != "":
+			return e2
+	return ""
+
+
+func _apply_msgs(m: Arm9Mod) -> String:
+	var cur := gd.messages()
+	var t := gd.msg_table()
+	var n := cur.size()
+	if t == GameData.MSG_TABLE:
+		if n > GameData.N_MSG:
+			if m.read_u32(GameData.MSG_LITERAL) != t:
+				return "ARM9 word 0x%08X is not the message table base: unsupported game version" % GameData.MSG_LITERAL
+			t = m.alloc(8 * GameData.TABLE_MAX)
+			if t == 0:
+				return m.error
+			m.write_u32(GameData.MSG_LITERAL, t)
+			n = GameData.TABLE_MAX
+	else:
+		n = GameData.TABLE_MAX
+	var rec := PackedByteArray()
+	rec.resize(8)
+	for mid in n:
+		if mid < cur.size():
+			rec.encode_u32(0, cur[mid][0])
+			rec.encode_s32(4, cur[mid][1])
+		else:
+			rec.encode_u32(0, GameData.MSG_UNUSED)
+			rec.encode_s32(4, -1)
+		var e := m.write(t + 8 * mid, rec)
+		if e != "":
+			return e
+	return ""
+
+
+## Append a new string to every language bank (same text everywhere: translate it afterwards in the Text tab).
+## Its id goes to last_index. Txt_GetString does not bound-check ids, the offset table just grows.
+func add_string(t: String) -> String:
+	var enc := TextBank.from_str(t)
+	if enc.error != "":
+		return enc.error
+	var n := text_count()
+	for l in GameData.LANGS:
+		if gd.bank(l).count() != n:
+			return "the text banks do not have the same string count (%s: %d, en: %d)" % [l, gd.bank(l).count(), n]
+	if n >= 0xFFFF:
+		return "text ids are u16: no room left"
+	var datas := {}
+	for l in GameData.LANGS:
+		var bank := TextBank.new(current("text", GameData.BANKS[l]))
+		bank.all_strings()
+		bank.strings.append(PackedByteArray())
+		bank.set_string(n, enc.bytes)
+		var data := bank.write()
+		if data.is_empty() or TextBank.new(data).all_strings() != bank.strings:
+			return "internal error: the %s bank does not re-encode" % l
+		datas[l] = data
+	for k in GameData.LANGS.size():
+		_group = k > 0
+		_store("text", GameData.BANKS[GameData.LANGS[k]], datas[GameData.LANGS[k]])
+	_group = false
+	last_index = n
+	return ""
+
+
 # --- room furniture -----------------------------------------------------------------------------------------------
 
 func furniture_slot(loc: int) -> int:
@@ -666,12 +1026,22 @@ func edit_furniture(loc: int, i: int, prop = null, x = null, z = null, rot = nul
 
 ## ARM9 with the edits that live in it (default room furniture), on top of whatever the opened ROM already has
 ## (an extension area from an earlier export is kept). See Arm9Mod.
+## Also fills `ovl_patches` ({overlay: {literal address: [old value, new value]}}) for words outside the ARM9 that
+## must follow (the conversation table base in overlay 15). Errors go to m.error.
+var ovl_patches := {}
+
+
 func arm9_mod() -> Arm9Mod:
 	var m := Arm9Mod.new(gd.a9)
+	ovl_patches = {}
 	for k in edits:
 		var parts: PackedStringArray = k.split(":")
 		if parts[0] == "furniture":
 			m.write(RoomFurn.DEFAULTS + 24 * parts[1].to_int(), edits[k])
+	if m.error == "" and is_edited("conv", 0):
+		m.error = _apply_convs(m)
+	if m.error == "" and is_edited("msg", 0):
+		m.error = _apply_msgs(m)
 	return m
 
 
@@ -682,6 +1052,13 @@ func patched_arm9() -> PackedByteArray:
 func has_furniture_edits() -> bool:
 	for k in edits:
 		if k.begins_with("furniture:"):
+			return true
+	return false
+
+
+func has_arm9_edits() -> bool:
+	for k in edits:
+		if k.begins_with("furniture:") or k.begins_with("conv:") or k.begins_with("msg:"):
 			return true
 	return false
 
@@ -713,13 +1090,31 @@ func build_rom() -> PackedByteArray:
 	if not reps.is_empty():
 		files[gd.rombin_file_id] = gd.rombin.build(reps)
 	var a9 := PackedByteArray()
-	if has_furniture_edits():
+	var ovt := PackedByteArray()
+	if has_arm9_edits():
 		var m := arm9_mod()
 		if m.error != "":
 			build_error = m.error
 			return PackedByteArray()
 		a9 = m.build()
-	var out := gd.rom.rebuild(files, a9)
+		if not ovl_patches.is_empty():
+			ovt = gd.rom.overlay9_table()
+			for ov in ovl_patches:
+				var code := gd.rom.overlay9_code(ov)
+				if code.is_empty():
+					build_error = gd.rom.error
+					return PackedByteArray()
+				var inf := gd.rom.overlay9_info(ov)
+				for at in ovl_patches[ov]:
+					var o: int = at - inf.ram
+					var pr: Array = ovl_patches[ov][at]
+					if o < 0 or o + 4 > code.size() or code.decode_u32(o) != pr[0]:
+						build_error = "overlay %d: the word at 0x%08X is not 0x%08X: unsupported game version" % [ov, at, pr[0]]
+						return PackedByteArray()
+					code.encode_u32(o, pr[1])
+				files[inf.file] = code   # stored uncompressed: clear the compressed flag
+				ovt.encode_u32(32 * ov + 0x1C, code.size() & 0xFFFFFF)
+	var out := gd.rom.rebuild(files, a9, ovt)
 	last_hints = gd.rom.last_map.duplicate()
 	if files.has(gd.rombin_file_id):
 		var old_start := gd.rom.file_range(gd.rombin_file_id).x

@@ -72,6 +72,14 @@ var text_edit: TextEdit
 var text_info: Label
 var text_id := -1
 var _text_sig := []
+var dlg_mode_opt: OptionButton
+var dlg_search: LineEdit
+var dlg_list: ItemList
+var dlg_detail: VBoxContainer
+var dlg_new_text: LineEdit
+var dlg_id := -1
+var dlg_work = null          # working copy of the selected conversation lines / message (applied with Apply)
+var _dlg_sig := []
 var open_dlg: FileDialog
 var save_dlg: FileDialog
 var save_kind := "nds"      # what save_dlg writes: "nds" or "bps"
@@ -117,6 +125,15 @@ func _debug_shot(out: String, args: PackedStringArray) -> void:
 			var ln := a.trim_prefix("--script-line=").to_int()
 			script_edit.set_caret_line(ln)
 			script_edit.scroll_vertical = maxi(0, ln - 3)
+		if a.begins_with("--dlg="):
+			var dv := a.trim_prefix("--dlg=").split(",")
+			for i in tabs.get_tab_count():
+				if tabs.get_tab_control(i).name == "Dialogue":
+					tabs.current_tab = i
+			if dv.size() > 1:
+				dlg_mode_opt.select(dv[1].to_int())
+			_refresh_dialogue(true)
+			_dlg_select(dv[0].to_int())
 		if a.begins_with("--text="):
 			text_search.text = a.trim_prefix("--text=")
 			_refresh_text_list(true)
@@ -408,6 +425,7 @@ func _build_editor() -> void:
 	palette = _scroll_tab("Add item")
 	_build_scripts_tab()
 	_build_text_tab()
+	_build_dialogue_tab()
 
 	var bottom := MarginContainer.new()
 	bottom.add_theme_constant_override("margin_left", 8)
@@ -534,6 +552,322 @@ func _revert_text() -> void:
 		return
 	text_edit.text = proj.original_text(lang, text_id)
 	_apply_text()
+
+
+# --- Dialogue tab: conversation table (lines + speakers) and message table -----------------------------------------
+
+func _build_dialogue_tab() -> void:
+	var m := MarginContainer.new()
+	m.name = "Dialogue"
+	for s in ["left", "right", "top", "bottom"]:
+		m.add_theme_constant_override("margin_" + s, 8)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	m.add_child(v)
+	dlg_mode_opt = W.option([[0, "Conversations"], [1, "Messages"]], 0)
+	dlg_mode_opt.custom_minimum_size.x = 150
+	dlg_mode_opt.item_selected.connect(func(_i): dlg_id = -1; _refresh_dialogue(true))
+	dlg_search = LineEdit.new()
+	dlg_search.placeholder_text = "Search text, speaker, or an id (217)"
+	dlg_search.clear_button_enabled = true
+	dlg_search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dlg_search.text_changed.connect(func(_t): _refresh_dialogue(true))
+	v.add_child(W.hbox([dlg_mode_opt, dlg_search, W.button("New", _dlg_new, "New conversation (one line, the narrator) or new message")]))
+	var split := VSplitContainer.new()
+	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(split)
+	dlg_list = ItemList.new()
+	dlg_list.custom_minimum_size.y = 110
+	dlg_list.item_selected.connect(func(i): _dlg_select(dlg_list.get_item_metadata(i)))
+	split.add_child(dlg_list)
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.custom_minimum_size.y = 160
+	dlg_detail = VBoxContainer.new()
+	dlg_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dlg_detail.add_theme_constant_override("separation", 6)
+	sc.add_child(dlg_detail)
+	split.add_child(sc)
+	dlg_new_text = LineEdit.new()
+	dlg_new_text.placeholder_text = "Text of a new string (added to every language; translate it in the Text tab)"
+	dlg_new_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(W.hbox([dlg_new_text, W.button("+ Line with it", _dlg_add_new_string_line,
+		"Add this text as a new string and append a line using it to the conversation being edited (or set it as the message's first text)")]))
+	tabs.add_child(m)
+
+
+func _dlg_is_msg() -> bool:
+	return W.option_value(dlg_mode_opt) == 1
+
+
+func _dlg_one(t: String, n := 70) -> String:
+	var one := t.replace("\n", " ⏎ ")
+	return one.substr(0, n) + "…" if one.length() > n else one
+
+
+## Rebuild the list (when the tables / language changed, or `force`).
+func _refresh_dialogue(force := false) -> void:
+	if gd == null or dlg_list == null:
+		return
+	var sig := [lang, gd.bank(lang).get_instance_id(), proj.edits.get("conv:0"), proj.edits.get("msg:0"), _dlg_is_msg()]
+	if not force and sig == _dlg_sig:
+		return
+	if _dlg_sig.is_empty() or sig[4] != _dlg_sig[4]:
+		dlg_work = null   # mode switched: the working copy is of the other kind
+		dlg_id = -1
+	_dlg_sig = sig
+	var q := dlg_search.text.strip_edges()
+	var ql := q.to_lower()
+	var want := q.to_int() if q.is_valid_int() else -1
+	dlg_list.clear()
+	if _dlg_is_msg():
+		var ms := gd.messages()
+		var orig := gd.rom_messages()
+		for mid in ms.size():
+			var t := gd.text(ms[mid][0], lang) + ((" / " + gd.text(ms[mid][1], lang)) if ms[mid][1] >= 0 else "")
+			if (want >= 0 and mid != want) or (want < 0 and ql != "" and t.to_lower().find(ql) < 0):
+				continue
+			var row := dlg_list.add_item("%3d  %s" % [mid, _dlg_one(t)])
+			dlg_list.set_item_metadata(row, mid)
+			if mid >= orig.size() or orig[mid] != ms[mid]:
+				dlg_list.set_item_custom_fg_color(row, W.WARN)
+			if mid == dlg_id:
+				dlg_list.select(row)
+	else:
+		var cs := gd.conversations()
+		var orig := gd.rom_conversations()
+		for cid in cs.size():
+			if cs[cid] == null:
+				continue
+			var c: Array = cs[cid]
+			var first := "%s: %s" % [gd.speaker_name(c[0][1], lang), gd.text(c[0][0], lang)] if not c.is_empty() else ""
+			if want >= 0:
+				if cid != want:
+					continue
+			elif ql != "":
+				var hit := false
+				for l in c:
+					if gd.text(l[0], lang).to_lower().find(ql) >= 0 or gd.speaker_name(l[1], lang).to_lower().find(ql) >= 0:
+						hit = true
+						break
+				if not hit:
+					continue
+			var row := dlg_list.add_item("%3d  (%d)  %s" % [cid, c.size(), _dlg_one(first)])
+			dlg_list.set_item_metadata(row, cid)
+			if cid >= orig.size() or orig[cid] != c:
+				dlg_list.set_item_custom_fg_color(row, W.WARN)
+			if cid == dlg_id:
+				dlg_list.select(row)
+	_dlg_select(dlg_id, false)
+
+
+func _speaker_opts() -> Array:
+	var out := [[0x3F, "narrator (no portrait)"], [0x40, "player"]]
+	for n in GameData.N_NPCS:
+		out.append([n, "%d %s" % [n, gd.npc_name(n, lang)]])
+	return out
+
+
+## Show conversation / message `id` (keep_work: keep the unapplied working copy when it is the same id).
+func _dlg_select(id: int, reset := true) -> void:
+	var is_msg := _dlg_is_msg()
+	if reset or id != dlg_id or dlg_work == null:
+		dlg_id = id
+		dlg_work = null
+		if id >= 0:
+			if is_msg and id < gd.n_msg():
+				dlg_work = gd.message(id).duplicate()
+			elif not is_msg and gd.conv_exists(id):
+				dlg_work = gd.conversation(id).duplicate(true)
+	_render_dialogue()
+
+
+func _render_dialogue() -> void:
+	W.clear(dlg_detail)
+	if dlg_work == null:
+		dlg_detail.add_child(W.label("Select a conversation or a message, or press New.", W.MUTED))
+		return
+	if _dlg_is_msg():
+		_render_message()
+	else:
+		_render_conversation()
+
+
+func _users_text(users: Array) -> String:
+	if users.is_empty():
+		return "not used by any layout script"
+	var parts := []
+	for u in users.slice(0, 6):
+		parts.append("location %d block %d script %d (%s)" % [u.location, u.block, u.script, u.name])
+	return "used by " + "; ".join(parts) + (" …" if users.size() > 6 else "")
+
+
+func _render_conversation() -> void:
+	var cid := dlg_id
+	var lines: Array = dlg_work
+	var is_new := proj.is_new_conv(cid)
+	var head := "Conversation %d%s · %d line(s) · %s" % [cid, " (new)" if is_new else "", lines.size(), _users_text(proj.conv_users(cid))]
+	dlg_detail.add_child(W.label(head, W.MUTED))
+	if cid in GameData.CONV_STATE21:
+		dlg_detail.add_child(W.label("Ops 0x17 / 0x2A send this conversation to another screen (state 0x21) that only uses the text of line 1.", W.WARN))
+	if cid == 0xBC:
+		dlg_detail.add_child(W.label("The game shows a fixed speaker name and portrait for this conversation (prop 0x1B), whatever the line speakers.", W.WARN))
+	var sp := _speaker_opts()
+	var maxt := proj.text_count() - 1
+	for k in lines.size():
+		var l: Array = lines[k]
+		var o := W.option(sp, l[1])
+		o.custom_minimum_size.x = 150
+		o.item_selected.connect(func(_i): lines[k][1] = W.option_value(o); _dlg_changed())
+		var s := W.spin(0, maxt, l[0])
+		s.prefix = "text"
+		s.custom_minimum_size.x = 120
+		s.value_changed.connect(func(val): lines[k][0] = int(val); _dlg_changed())
+		var up := W.button("↑", func(): _dlg_move(k, -1), "Move up")
+		up.disabled = k == 0
+		var dn := W.button("↓", func(): _dlg_move(k, 1), "Move down")
+		dn.disabled = k == lines.size() - 1
+		var rm := W.button("✕", func(): lines.remove_at(k); _dlg_changed(true), "Remove this line")
+		rm.disabled = lines.size() == 1
+		var tx := W.button("Text", func(): _dlg_open_text(lines[k][0]), "Edit this string in the Text tab")
+		dlg_detail.add_child(W.hbox([W.label("%d" % (k + 1), W.MUTED, false), o, s, up, dn, rm, tx]))
+		var prev := W.label("    0x%04X  %s" % [l[0], _dlg_one(gd.text(l[0], lang), 160)])
+		dlg_detail.add_child(prev)
+	var dirty := lines != gd.conversation(cid)
+	var row := [W.button("+ Line", func(): lines.append(lines.back().duplicate()); _dlg_changed(true), "Duplicate the last line (then change its text id)"),
+		W.button("Apply" + (" *" if dirty else ""), _dlg_apply, "Save these lines")]
+	var orig := W.button("Original", _dlg_original, "Put back the ROM's lines")
+	orig.disabled = is_new
+	row.append(orig)
+	if is_new:
+		row.append(W.button("Delete", _dlg_delete, "Remove this new conversation (refused while a script uses it)"))
+	dlg_detail.add_child(W.hbox(row))
+	dlg_detail.add_child(W.label("Use it from the Scripts tab: conversation(conv=%d, group=0, script=0), phone_conversation(…) or npc_set_talk(npc=…, conv=%d, …). " % [cid, cid]
+		+ "Speakers: an NPC id shows its name and portrait (and marks it as met)." , W.MUTED))
+
+
+func _render_message() -> void:
+	var mid := dlg_id
+	var mw: Array = dlg_work
+	var is_new := mid >= gd.rom_messages().size()
+	dlg_detail.add_child(W.label("Message %d%s · %s" % [mid, " (new)" if is_new else "", _users_text(proj.msg_users(mid))], W.MUTED))
+	var maxt := proj.text_count() - 1
+	for k in 2:
+		var s := W.spin(-1 if k == 1 else 0, maxt, mw[k])
+		s.prefix = "text" if k == 0 else "second text (-1 = none)"
+		s.custom_minimum_size.x = 220
+		s.value_changed.connect(func(val): mw[k] = int(val); _dlg_changed(true))
+		var tx := W.button("Text", func(): _dlg_open_text(mw[k]), "Edit this string in the Text tab")
+		tx.disabled = mw[k] < 0
+		dlg_detail.add_child(W.hbox([s, tx]))
+		if mw[k] >= 0:
+			dlg_detail.add_child(W.label("    0x%04X  %s" % [mw[k], _dlg_one(gd.text(mw[k], lang), 200)]))
+	var dirty := mw != gd.message(mid)
+	var row := [W.button("Apply" + (" *" if dirty else ""), _dlg_apply, "Save this message")]
+	if is_new and mid == gd.n_msg() - 1:
+		row.append(W.button("Delete", _dlg_delete, "Remove this new message (only the last one, refused while a script uses it)"))
+	elif not is_new:
+		row.append(W.button("Original", _dlg_original, "Put back the ROM's texts"))
+	dlg_detail.add_child(W.hbox(row))
+	dlg_detail.add_child(W.label(("Use it from the Scripts tab: message(msg=0x%x, script=0, queued=1). queued=1 shows the popup once the game is back to the map "
+		+ "(needed right after a conversation: queued=0 there leaves it invisible and its script never runs); the script runs when the popup is closed.") % mid, W.MUTED))
+
+
+func _dlg_changed(rerender := false) -> void:
+	if rerender:
+		_render_dialogue()
+	else:
+		# update previews / dirty mark without rebuilding the controls being edited
+		_render_dialogue.call_deferred()
+
+
+func _dlg_move(k: int, d: int) -> void:
+	var lines: Array = dlg_work
+	var t = lines[k]
+	lines[k] = lines[k + d]
+	lines[k + d] = t
+	_render_dialogue()
+
+
+func _dlg_open_text(id: int) -> void:
+	if id < 0:
+		return
+	for i in tabs.get_tab_count():
+		if tabs.get_tab_control(i).name == "Text":
+			tabs.current_tab = i
+	text_search.text = "0x%x" % id
+	_refresh_text_list(true)
+	_select_text(id)
+
+
+func _dlg_apply() -> void:
+	if dlg_work == null:
+		return
+	var id := dlg_id
+	var e: String
+	if _dlg_is_msg():
+		e = proj.set_message(id, dlg_work[0], dlg_work[1])
+	else:
+		e = proj.set_conversation(id, dlg_work)
+	if apply(e):
+		_dlg_select(id)
+		status("%s %d saved (ARM9 table; exported with the ROM)" % ["Message" if _dlg_is_msg() else "Conversation", id])
+
+
+func _dlg_original() -> void:
+	if dlg_work == null:
+		return
+	if _dlg_is_msg():
+		dlg_work = gd.rom_messages()[dlg_id].duplicate()
+	else:
+		dlg_work = gd.rom_conversations()[dlg_id].duplicate(true)
+	_dlg_apply()
+
+
+func _dlg_delete() -> void:
+	var id := dlg_id
+	var e := proj.delete_message(id) if _dlg_is_msg() else proj.delete_conversation(id)
+	if apply(e):
+		dlg_id = -1
+		_refresh_dialogue(true)
+		status("%s %d deleted" % ["Message" if _dlg_is_msg() else "Conversation", id])
+
+
+func _dlg_new() -> void:
+	var e: String
+	if _dlg_is_msg():
+		e = proj.add_message(dlg_work[0] if dlg_work != null else 0x990, -1)
+	else:
+		e = proj.add_conversation([[0x49F, 0x3F]])
+	if apply(e):
+		dlg_id = proj.last_index
+		dlg_search.text = ""
+		_refresh_dialogue(true)
+		status("New %s %d: set its lines, then use it from the Scripts tab" % ["message" if _dlg_is_msg() else "conversation", dlg_id])
+
+
+## Add the text box content as a new string (every language) and use it in the item being edited.
+func _dlg_add_new_string_line() -> void:
+	var t := dlg_new_text.text
+	if t.strip_edges() == "":
+		status("Type the text of the new string first")
+		return
+	var work = dlg_work
+	if not apply(proj.add_string(t)):
+		return
+	var sid := proj.last_index
+	dlg_new_text.text = ""
+	if work != null:
+		dlg_work = work
+		if _dlg_is_msg():
+			dlg_work[0] = sid
+		else:
+			var spk: int = dlg_work.back()[1] if not dlg_work.is_empty() else 0x3F
+			dlg_work.append([sid, spk])
+		_render_dialogue()
+		status("New string 0x%04X added to every language; press Apply to save the %s" % [sid, "message" if _dlg_is_msg() else "conversation"])
+	else:
+		status("New string 0x%04X added to every language (select a conversation to use it)" % sid)
 
 
 func _scroll_tab(title: String) -> VBoxContainer:
@@ -675,6 +1009,7 @@ func _rebuild_view(refit: bool) -> void:
 	_render_tree()
 	_render_scripts()
 	_refresh_text_list()
+	_refresh_dialogue()
 	if _find(sel) == null:
 		sel = ""
 	if mode == "items":
@@ -1112,14 +1447,15 @@ func _script_line_text() -> void:
 		return
 	var a := LayScript.decode_args(r[0], r[1])
 	var ids := []
-	if a.has("conv") and a.conv < GameData.N_CONV:
+	if a.has("conv"):
 		for l in gd.conversation(a.conv):
 			ids.append(l[0])
 	elif a.has("msg"):
 		var m := gd.message(a.msg)
-		ids.append(m[0])
-		if m[1] >= 0:
-			ids.append(m[1])
+		if not m.is_empty():
+			ids.append(m[0])
+			if m[1] >= 0:
+				ids.append(m[1])
 	elif a.has("npc") and a.npc < 0x3F:
 		ids.append(GameData.NPC_NAME_BASE + a.npc)
 	if ids.is_empty():

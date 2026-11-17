@@ -114,6 +114,10 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
+- 2026-11-17 (latest): conversation / message tables in the Godot editor (Dialogue tab: lines, speakers, new
+  conversations 217..255, new messages, new strings appended to the 6 banks). Moved tables live in the ARM9 extension;
+  overlay 15 is patched (stored decompressed). godot/tests/test_conversations.gd + test_dialogue_ui.gd; new
+  conversation + message + strings CONFIRMED in game (build/conv_test/). Message op after a conversation needs queued=1.
 - 2026-11-17 (later): script editing in the Godot editor (Scripts tab: text form `op(field=value)`, assembler
   byte-identical on 659/659 scripts, ref checks, new scripts). godot/tests/test_scripts.gd; new script run in game
   CONFIRMED (build/scripts_test/). Fixed: x coordinate of ops 0x0D / 0x1B was hidden (unused bytes now `_`).
@@ -165,8 +169,7 @@ Code-driven approach:
 - Model textures fixed (2026-10-06): `tools/nitro.py bmd0_to_glb` replaces the nitrogen CLI. It fixes nitrogen's flipped V,
   its lost repeat/mirror wrap (taken from the material teximage_param) and its wrong NNS Maya texture SRT. 175/175 regenerated and
   checked against the game screenshots; the Maya formula itself comes from noclip (not confirmed in arm9).
-- Next step (to agree with the user): editing the conversation table (which lines / speakers a conversation
-  holds, new conversations, arm9 0x0211F16C) and the message table; direct boot into a location for Test ▶. Older list from milestone 3:
+- Next step (to agree with the user): direct boot into a location for Test ▶. Older list from milestone 3:
   - drag in 3D;
   - editing scripts and text from the editor;
   - waypoint link display and editing;
