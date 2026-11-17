@@ -59,3 +59,31 @@ Any relocation must still be checked in the code and in the emulator, table by t
 The game reads the rom.bin offset table one entry at a time (`Arc_GetEntrySize`, `Arc_ReadEntryRaw`: seek idx*4,
 read 8 bytes) and keeps no entry count, so entries can be appended (`RomBin.build(replacements, added)`). A ROM with
 one extra entry (8866) boots and plays. Using such an entry needs code or a table that points at its index.
+
+## 5. Direct boot into a location (test ROMs) — CONFIRMED (code + emulator)
+
+Code: `EditProject.boot_patch` (godot/scripts/core/project.gd), test `godot/tests/test_boot.gd`. Used by **Test ▶**
+only (File > "Test starts in this location"); a normal export never has it.
+
+Boot flow (code):
+- Startup code 0x02000DF4..0x02000EF0 (before the main loop calls Game_UpdateStateMachine): error cases request
+  state 0x2E; the normal case requests state **0x26** (movie 3 "Sims1", then state 0x18 = title) on slot 0 and state
+  **0x2B** step 3 (logo / copyright screens, State2B_LogoUpdate 0x02054178) on slot 1.
+- State 0x2B step 4 (same two requests) only runs after the ready flag G+0x19, i.e. not at power on.
+- End of Create-a-Sim (overlay 3, 0x0214BD14): `[0x0213E434]+0x68 = choice`, then
+  `Game_RequestStateOtherSlot(G, 2, 5, 5, 8)` (slot 0: state 2, mode 5, location 5, entry id 8) and
+  `FUN_0204818c(G, 0xC, 0, 0, 0)` (own slot 1: state 0xC = in-game UI).
+- State 2 mode 5 = new game: State2_LocationEnter calls Game_InitNewGame, then places the Sim at the entry id.
+
+Patch: the `bl Game_RequestState` of the 0x2B step change (0x0205440C, step N → N−1) branches to a 24-word routine in
+the extension (§2) that requests state 2 (5, location, entry) on slot 0 and state 0xC (0, 0, 0) on slot 1.
+So the game shows the first copyright screen, then starts a new game in the chosen place.
+
+Emulator checks (2026-11-17, `build/boot_test/`, `build/boot_test9/`, cold boot, no RAM writes):
+- location 6 entry 0: City Hall at frame ~400, bottom UI complete, City Hall welcome popup, $2000; the Sim walks, the
+  exit door loads location 5 and the new-game intro conversation (Jebediah) plays.
+- location 9 entry 0: Desert, UI complete.
+- **Rejected first version**: patching the startup requests themselves (state 2 + 0xC at power on, 0x2B never runs)
+  starts the game but the bottom-screen UI has no icons; injecting the same requests in RAM before 0x2B starts gives
+  the same missing icons and a dark bottom screen. Something done by state 0x2B is needed (not identified).
+- The Sim is the default one (no Create-a-Sim); `[0x0213E434]+0x68` is left at 0 (its meaning is unknown).

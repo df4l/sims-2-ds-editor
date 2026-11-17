@@ -114,6 +114,10 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
+- 2026-11-17 (latest): Test ▶ boots straight into the shown location (new game at the selected / first entry point):
+  hook of the logo state 0x2B step change (0x0205440C) → ARM9 extension routine requesting state 2 mode 5 + state 0xC
+  (docs/formats/arm9.md §5, godot/tests/test_boot.gd). CONFIRMED cold boot in melonDS (locations 6 and 9,
+  build/boot_test*/). Patching the startup requests instead loses the UI icons (0x2B must run first).
 - 2026-11-17 (latest): conversation / message tables in the Godot editor (Dialogue tab: lines, speakers, new
   conversations 217..255, new messages, new strings appended to the 6 banks). Moved tables live in the ARM9 extension;
   overlay 15 is patched (stored decompressed). godot/tests/test_conversations.gd + test_dialogue_ui.gd; new
@@ -169,7 +173,7 @@ Code-driven approach:
 - Model textures fixed (2026-10-06): `tools/nitro.py bmd0_to_glb` replaces the nitrogen CLI. It fixes nitrogen's flipped V,
   its lost repeat/mirror wrap (taken from the material teximage_param) and its wrong NNS Maya texture SRT. 175/175 regenerated and
   checked against the game screenshots; the Maya formula itself comes from noclip (not confirmed in arm9).
-- Next step (to agree with the user): direct boot into a location for Test ▶. Older list from milestone 3:
+- Next step (to agree with the user). Older list from milestone 3:
   - drag in 3D;
   - editing scripts and text from the editor;
   - waypoint link display and editing;

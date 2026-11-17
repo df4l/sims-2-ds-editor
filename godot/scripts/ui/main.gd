@@ -16,6 +16,7 @@ var lay: Layout
 var block := 0
 var lang := "en"
 var sel := ""
+var file_menu: MenuButton
 var mode := "items"        # items | cells
 var cell = null            # selected brush dict (cells mode)
 var cell_at := Vector2.ZERO
@@ -336,10 +337,15 @@ func _build_editor() -> void:
 	pm.add_item("Export as BPS patch…", 4)
 	pm.add_item("Test in emulator (F5)", 5)
 	pm.add_item("Choose emulator…", 6)
+	pm.add_check_item("Test starts in this location (new game)", 7)
+	pm.set_item_checked(pm.get_item_index(7), _setting("test_direct_boot", true))
+	pm.set_item_tooltip(pm.get_item_index(7), "On: the test ROM skips the intro, menus and Create-a-Sim and starts a " +
+		"new game at the selected entry point (or the first one) of the shown location. Off: normal boot.")
 	pm.add_separator()
 	pm.add_item("Discard every edit…", 2)
 	pm.add_item("Close ROM", 3)
 	pm.id_pressed.connect(_on_file_menu)
+	file_menu = file
 	top.add_child(file)
 	top.add_child(W.label("Location", W.MUTED, false))
 	loc_opt = OptionButton.new()
@@ -898,6 +904,11 @@ func _on_file_menu(id: int) -> void:
 		4: _export_dialog("bps")
 		5: _test_in_emulator()
 		6: emu_dlg.popup_centered_ratio(0.6)
+		7:
+			var on: bool = not _setting("test_direct_boot", true)
+			_set_setting("test_direct_boot", on)
+			var pm: PopupMenu = file_menu.get_popup()
+			pm.set_item_checked(pm.get_item_index(7), on)
 		2: ask("Drop every edit of this ROM (layouts, collision, room furniture, text)? This cannot be undone.", func():
 			proj.discard_all()
 			_reload())
@@ -2028,10 +2039,11 @@ func _test_in_emulator() -> void:
 		return
 	var path := ProjectSettings.globalize_path(proj.dir.path_join("test.nds"))
 	DirAccess.make_dir_recursive_absolute(proj.dir)
+	var boot := _test_boot()
 	status("Building the test ROM…")
 	await get_tree().process_frame
 	await get_tree().process_frame
-	var e := proj.export_rom(path)
+	var e := proj.export_rom(path, boot)
 	if e != "":
 		show_msg("Export failed: " + e)
 		status("Export failed")
@@ -2041,8 +2053,22 @@ func _test_in_emulator() -> void:
 		show_msg("Could not start %s" % emu)
 		status("Emulator failed to start")
 		return
-	status("Testing %s in %s%s" % [path.get_file(), emu.get_file(),
-		" (room furniture edits only show in a NEW game)" if proj.has_furniture_edits() else ""])
+	if boot.is_empty():
+		status("Testing %s in %s%s" % [path.get_file(), emu.get_file(),
+			" (room furniture edits only show in a NEW game)" if proj.has_furniture_edits() else ""])
+	else:
+		status("Testing %s in %s: new game in location %d at entry %d" % [path.get_file(), emu.get_file(), boot[0], boot[1]])
+
+
+## [location, entry id] for a direct-boot test ROM, or [] for a normal boot (option off, no entry point).
+## The selected entry point wins, else the first one of the shown location.
+func _test_boot() -> Array:
+	if not _setting("test_direct_boot", true) or lay == null or loc < 0 or lay.entries.is_empty():
+		return []
+	var k := 0
+	if sel.begins_with("e/"):
+		k = clampi(sel.get_slice("/", 1).to_int(), 0, lay.entries.size() - 1)
+	return [loc, lay.entries[k][0xC]]
 
 
 func _export_to(path: String) -> void:

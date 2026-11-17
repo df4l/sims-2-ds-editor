@@ -962,3 +962,21 @@ Godot is now the only editor. Low-level tools for adding new content rather than
 - **Emulator, CONFIRMED**: new conversation 217 + new message 26 + 3 new strings play at a new game
   (docs/formats/text.md §5). First try used `message(…, queued=0)` from the conversation's end script: UI+0x18 was
   set to 25 but no popup appeared and the intro stalled; with `queued=1` it works (the game's own choice in 20/22 ops).
+
+
+## 2026-11-17 (latest) — Direct boot into a location for Test ▶
+
+- **Hypothesis**: requesting state 2 mode 5 (what Create-a-Sim does) at boot starts a playable new game anywhere.
+  **Code**: Game_InitNewGame is only called by State2_LocationEnter when arg0 == 5; Create-a-Sim (overlay 3,
+  0x0214BD40) requests state 2 (5, 5, 8) on slot 0 and state 0xC on slot 1. Startup code 0x02000EA8 requests the
+  movie 0x26 + logo state 0x2B (step 3); 0x2B step 4 is a soft-reset path only.
+- **Test 1** (RAM, original ROM, frame 32 while 0x2B runs): write the two requests → City Hall, UI and text OK,
+  Sim moves. **CONFIRMED**.
+- **Test 2** (ROM patch of the startup requests, 0x2B never runs): game starts but the UI has no icons. Same with a
+  RAM injection at frame 21 (before 0x2B starts): no icons, dark bottom screen. → 0x2B must run (cause not found).
+- **Final**: hook the 0x2B step-change call (0x0205440C) into a 24-word extension routine issuing both requests.
+  `test_boot.gd` 0 failures (routine words, literal / bl targets, re-patch of a test ROM, refusals, normal export
+  unchanged). Emulator, cold boot: location 6 entry 0 (UI complete, door to location 5 works, new-game intro script
+  plays) and location 9 entry 0. **CONFIRMED**. docs/formats/arm9.md §5.
+- **Editor**: Test ▶ uses the selected entry point (else the first one) of the shown location; File menu check
+  "Test starts in this location (new game)" (on by default) turns it off.

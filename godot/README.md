@@ -41,7 +41,9 @@ The Godot binaries are not committed (see `.gitignore`).
    - File > **Export as BPS patch…** writes a patch of the opened ROM instead (apply with Flips, ROM Patcher JS…).
      Share the patch, not the ROM.
    - **Test ▶** (F5) builds a scratch ROM in the project folder and opens it in your emulator (chosen once with
-     File > Choose emulator…; melonDS recommended).
+     File > Choose emulator…; melonDS recommended). The test ROM skips the intro, the menus and Create-a-Sim and
+     starts a new game in the shown location, at the selected entry point (or the first one), with a default Sim.
+     Uncheck File > "Test starts in this location" for a normal boot (intro, text shown at boot, saved games).
 
 Edits are autosaved under the Godot user folder (`%APPDATA%/Godot/app_userdata/Sims 2 DS Map Editor/projects/<sha1 of the ROM>/`),
 so reopening the same ROM restores them.
@@ -76,6 +78,7 @@ godot --headless --path . --script res://tests/test_foundations.gd -- sims2.nds 
 godot --headless --path . --script res://tests/test_text.gd -- sims2.nds out_dir   # text banks: round-trip, edits, export
 godot --headless --path . --script res://tests/test_scripts.gd -- sims2.nds out_dir   # layout scripts: text round-trip, edits, export
 godot --headless --path . --script res://tests/test_conversations.gd -- sims2.nds out_dir   # conversation / message tables, new strings, export
+godot --headless --path . --script res://tests/test_boot.gd -- sims2.nds out_dir [loc entry]   # direct-boot test ROM patch
 godot --path . --script res://tests/test_dialogue_ui.gd -- sims2.nds   # Dialogue tab smoke test (needs a window)
 godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]]   # UI screenshot
 ```

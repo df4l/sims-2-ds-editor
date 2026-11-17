@@ -245,3 +245,15 @@ Data: 0x02122A00 object info table, 18-byte records {u16 icon tiles, def, pal, u
 
 Data: prop variant texture sub-tables (u16 rom.bin entries, indexed by prop − base) 0x02117DE4…0x02117F10, read by the
 Prop_CreatePlacementObject cases (docs/formats/roomfurn.md §4b).
+
+## Boot states (2026-11-17)
+
+| Address | Name | Role | Status |
+|---|---|---|---|
+| 0x02054564 | State2B_LogoEnter | enter() of state 0x2B (logo / copyright screens), arg0 = step 0..6 | confirmed (code) |
+| 0x02054178 | State2B_LogoUpdate | update() of 0x2B: countdown, then step − 1 (bl at 0x0205440C, hooked by the direct boot); step 0 → title 0x18; step 4 (after G+0x19) → movie + step 3 | confirmed (code + emulator) |
+| 0x02059088 | State26_MovieEnter | enter() of state 0x26: plays movie arg2 (0 Alien, 1 RatFemale, 2 RatMale, 3 Sims1) | confirmed (code) |
+| 0x02058fb8 | State26_MovieUpdate | update() of 0x26: when the movie ends, requests state arg0 on slot 0 and arg1 on slot 1 | confirmed (code) |
+
+Startup requests at 0x02000DF4..0x02000EF0 (no function defined in Ghidra): state 0x2E (error cases) or 0x26 (0x18, 0, 3)
++ 0x2B step 3. Create-a-Sim end (overlay 3, 0x0214BD14): state 2 (5, 5, 8) + state 0xC. docs/formats/arm9.md §5.

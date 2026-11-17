@@ -1045,6 +1045,84 @@ func arm9_mod() -> Arm9Mod:
 	return m
 
 
+## Direct boot (test ROMs only). At power on the game runs the intro movie (state 0x26) on the top slot and the logo
+## sequence (state 0x2B, step 3) on the bottom slot. State 0x2B must run first: the in-game UI (state 0xC) started
+## without it has no icons and a dark screen (emulator, 2026-11-17). So the first logo step change (0x2B update,
+## FUN_02054178: `bl Game_RequestState` at BOOT_HOOK, step N -> N-1) is redirected to a routine in the ARM9
+## extension that requests what Create-a-Sim requests at its end (overlay 3, 0x0214BD40): state 2 mode 5 = new game
+## (State2_LocationEnter -> Game_InitNewGame) at (location, entry id) on the top slot, state 0xC (in-game UI) on the
+## bottom slot. See docs/formats/arm9.md §5.
+const BOOT_HOOK := 0x0205440C        # bl Game_RequestState (0x2B, slot 1, step - 1)
+const BOOT_HOOK_WORD := 0xEBFFCF3D
+const REQUEST_STATE := 0x02048108   # Game_RequestState(G, state, slot, arg0, [sp] arg1, [sp+4] arg2)
+const GAME_PTR := 0x02139FA4         # G
+
+
+static func arm_bl(from: int, to: int) -> int:
+	return 0xEB000000 | (((to - from - 8) >> 2) & 0xFFFFFF)
+
+
+## Target of the ARM `bl` word `w` at `at`, or -1 when `w` is not an unconditional bl.
+static func arm_bl_target(at: int, w: int) -> int:
+	if (w >> 24) != 0xEB:
+		return -1
+	var off := w & 0xFFFFFF
+	if off & 0x800000:
+		off -= 0x1000000
+	return at + 8 + 4 * off
+
+
+## Make the game skip the intro movie, the menus and Create-a-Sim, and start a new game in `location` at entry point
+## `entry` (the id byte +0xC), right after the first logo screen. "" or an error.
+static func boot_patch(m: Arm9Mod, location: int, entry: int) -> String:
+	if location < 0 or location > 32 or entry < 0 or entry > 255:
+		return "direct boot: location %d / entry %d out of range" % [location, entry]
+	var w := m.read_u32(BOOT_HOOK)
+	# a test ROM opened as the source already branches into its extension: accepted, re-hooked
+	var hooked := arm_bl_target(BOOT_HOOK, w) >= Arm9Mod.EXT_BASE
+	if w != BOOT_HOOK_WORD and not hooked:
+		return "direct boot: the word at 0x%08X is 0x%08X, not 0x%08X: unsupported game version" % [BOOT_HOOK, w, BOOT_HOOK_WORD]
+	var a := m.alloc(4 * 24)
+	if a == 0:
+		return m.error
+	var code := [
+		0xE92D4000,                  # stmdb sp!,{lr}
+		0xE24DD00C,                  # sub sp,sp,#0xC
+		0xE3A0C000 | location,       # mov ip,#location
+		0xE58DC000,                  # str ip,[sp]         arg1
+		0xE3A0C000 | entry,          # mov ip,#entry
+		0xE58DC004,                  # str ip,[sp,#4]      arg2
+		0xE59F003C,                  # ldr r0,[pc,#0x3C]   &G (literal below)
+		0xE5900000,                  # ldr r0,[r0]
+		0xE3A01002,                  # mov r1,#2           state 2
+		0xE3A02000,                  # mov r2,#0           top slot
+		0xE3A03005,                  # mov r3,#5           arg0 = mode 5 (new game)
+		0,                           # bl Game_RequestState
+		0xE3A03000,                  # mov r3,#0           arg0
+		0xE58D3000,                  # str r3,[sp]         arg1
+		0xE58D3004,                  # str r3,[sp,#4]      arg2
+		0xE59F0018,                  # ldr r0,[pc,#0x18]   &G
+		0xE5900000,                  # ldr r0,[r0]
+		0xE3A0100C,                  # mov r1,#0xC         state 0xC (in-game UI)
+		0xE3A02001,                  # mov r2,#1           bottom slot
+		0,                           # bl Game_RequestState
+		0xE28DD00C,                  # add sp,sp,#0xC
+		0xE8BD4000,                  # ldmia sp!,{lr}
+		0xE12FFF1E,                  # bx lr
+		GAME_PTR,                    # literal
+	]
+	code[11] = arm_bl(a + 4 * 11, REQUEST_STATE)
+	code[19] = arm_bl(a + 4 * 19, REQUEST_STATE)
+	var b := PackedByteArray()
+	b.resize(4 * code.size())
+	for i in code.size():
+		b.encode_u32(4 * i, code[i])
+	var e := m.write(a, b)
+	if e == "":
+		e = m.write_u32(BOOT_HOOK, arm_bl(BOOT_HOOK, a))
+	return e if e != "" else m.error
+
+
 func patched_arm9() -> PackedByteArray:
 	return arm9_mod().build()
 
@@ -1070,7 +1148,8 @@ var last_hints := []
 var build_error := ""
 
 
-func build_rom() -> PackedByteArray:
+## `boot` = [location, entry id] builds a test ROM that starts a new game there (boot_patch); [] = normal boot.
+func build_rom(boot := []) -> PackedByteArray:
 	build_error = ""
 	var reps := {}
 	for k in edits:
@@ -1091,8 +1170,10 @@ func build_rom() -> PackedByteArray:
 		files[gd.rombin_file_id] = gd.rombin.build(reps)
 	var a9 := PackedByteArray()
 	var ovt := PackedByteArray()
-	if has_arm9_edits():
+	if has_arm9_edits() or not boot.is_empty():
 		var m := arm9_mod()
+		if m.error == "" and not boot.is_empty():
+			m.error = boot_patch(m, boot[0], boot[1])
 		if m.error != "":
 			build_error = m.error
 			return PackedByteArray()
@@ -1134,10 +1215,10 @@ func _save(out_path: String, b: PackedByteArray) -> String:
 
 
 ## Write a new ROM with every edit at `out_path`. "" or an error.
-func export_rom(out_path: String) -> String:
+func export_rom(out_path: String, boot := []) -> String:
 	if out_path == gd.rom.path:
 		return "choose another file than the opened ROM"
-	var out := build_rom()
+	var out := build_rom(boot)
 	if out.is_empty():
 		return build_error
 	return _save(out_path, out)
