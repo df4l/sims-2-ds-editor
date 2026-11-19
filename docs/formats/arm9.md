@@ -87,3 +87,32 @@ Emulator checks (2026-11-17, `build/boot_test/`, `build/boot_test9/`, cold boot,
   starts the game but the bottom-screen UI has no icons; injecting the same requests in RAM before 0x2B starts gives
   the same missing icons and a dark bottom screen. Something done by state 0x2B is needed (not identified).
 - The Sim is the default one (no Create-a-Sim); `[0x0213E434]+0x68` is left at 0 (its meaning is unknown).
+
+## 6. Music override hooks for new location ids — CONFIRMED (code; emulator: read path)
+
+`LocExt.music_hook` (godot/scripts/core/loc_ext.gd). The per-location music override S+0x449C u8[33]
+(S = [0x0213E434]; 0x2A = record music) has no room for ids 33+ (byte S+0x44C0 = +36 is the "outdoor" value of
+Map_UpdateLocationAmbience). All 12 accesses (a scan of every literal word 0x4498..0x44C4 and every `#0x49c]`
+operand in the ARM9 and the 19 overlays):
+
+| site | instruction(s) | function |
+|------|----------------|----------|
+| 0x0201F63C / F640 | `add r0,r0,#0x4000` ; `strb r1,[r0,#0x49c]` | Unk_0201f190_PropMsgHandler (msg 0x5E, stereo) |
+| 0x0201F684 / F688 | `add r1,r1,#0x4000` ; `strb r0,[r1,#0x49c]` | same |
+| 0x0201F69C / F6A0 | `ldrb r1,[r0,r5]` ; `add r2,r0,r5` (r2 = store address at F6B8 / F6D0) | same |
+| 0x0201F6FC / F700 | `add r1,r1,#0x4000` ; `strb r0,[r1,#0x49c]` | same |
+| 0x0201FFD8 | `ldrb r2,[r0,r2]` (r0 = S+0x449C) | prop update (state 0x69) |
+| 0x02020C94 | `ldrb r3,[r0,r3]` | prop update |
+| 0x02084C64 / C68 | `add r0,r0,#0x4000` ; `ldrb r0,[r0,#0x49c]` | Map_LoadLocation |
+| 0x02084D14 / D18 | same | Map_PlayLocationMusic |
+| ov05 0x0214A120 / A124 | `add r2,r2,#0x4000` ; `strb r0,[r2,#0x49c]` | music picker (state 0x22) |
+| ov05 0x0214A654 / A658 | `add r0,r0,#0x4000` ; `ldrb r0,[r0,#0x49c]` | music picker |
+
+(The literal 0x449C at 0x02065C1C is the end bound of the S+0x4418 init loop, not an access.)
+Each first word is replaced by a `b` to a trampoline in the extension, which branches back (no `bl`: lr untouched;
+two temps pushed, flags saved with mrs / msr). The trampoline keeps the original code for id < 33 and uses a 64-byte
+array in the extension (init 0x2A) for 33..63. Overlay 5 is stored decompressed (like overlay 15).
+Emulator (build/newloc_proto/loc34_m.nds, without the old `mov r0,#0x2a` patch at 0x02084C68): id 34 loads and
+plays music track 5 (the City Hall record music, sound state 0x021424F8+10), S+0x449C+33.. unchanged; control id 6
+with the hooks: same. The write paths and Map_PlayLocationMusic were not triggered in the emulator (same trampoline
+shape, checked by disassembly). The extension array is not saved: a stereo music picked in a new location resets.

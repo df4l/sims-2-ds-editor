@@ -3,7 +3,9 @@ extends SceneTree
 ## record of `src`; direct boot into location `loc`.
 ##   Godot --headless --path godot --script res://tests/proto_newloc.gd -- rom.nds out.nds src loc [n]
 ## Full working recipe for 34 = City Hall copy (docs/journal.md, test 5):
-##   NEWLOC_LIGHT=1 NEWLOC_RENDER=1 NEWLOC_VARIANT=1 NEWLOC_PATCH=0x02084C68=0xE3A0002A,0x020766CC=0xE3540022 ... 6 34
+##   NEWLOC_LIGHT=1 NEWLOC_RENDER=1 NEWLOC_VARIANT=1 NEWLOC_MUSIC=1 NEWLOC_PATCH=0x020766CC=0xE3540022 ... 6 34
+## NEWLOC_MUSIC=1: music override hooks (LocExt.music_hook: 10 hooks for the 12 accesses, 2 in overlay 5); replaces the earlier test
+## patch 0x02084C68=0xE3A0002A (mov r0,#0x2a).
 
 const LOC_TABLE := 0x021332E0
 
@@ -57,6 +59,14 @@ func _init() -> void:
 		m.write_u32(0x02084CEC, a)
 		m.write_u32(0x02084C20, 0xE3520000 | (rows.size() / 6))   # cmp r2,#rows
 		print("variant table -> 0x%08X, %d rows" % [a, rows.size() / 6])
+	var ovl := {}
+	if OS.get_environment("NEWLOC_MUSIC") != "":
+		var me := LocExt.music_hook(m, ovl)
+		if me != "":
+			print(me)
+			quit(1)
+			return
+		print("music hooks installed, overlay patches ", ovl)
 	var e := EditProject.boot_patch(m, 6, 0)
 	if e != "":
 		print(e)
@@ -70,7 +80,17 @@ func _init() -> void:
 		m.write_u32(kv[0].hex_to_int(), kv[1].hex_to_int())
 		print("patch ", s)
 	var a9 := m.build()
-	var out := gd.rom.rebuild({}, a9, PackedByteArray())
+	var files := {}
+	var ovt := PackedByteArray()
+	if not ovl.is_empty():
+		var r2 := LocExt.apply_overlay_patches(gd.rom, ovl)
+		if r2.has("error"):
+			print(r2.error)
+			quit(1)
+			return
+		files = r2.files
+		ovt = r2.ovt
+	var out := gd.rom.rebuild(files, a9, ovt)
 	var f := FileAccess.open(args[1], FileAccess.WRITE)
 	f.store_buffer(out)
 	f.close()

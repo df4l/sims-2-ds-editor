@@ -1065,3 +1065,21 @@ screenshots in `build/newloc_proto/`.
 - **Next**: replace the 7 S+0x449C accesses with a hook that maps id ≥ 33 to a 64-byte array in the ARM9
   extension (not saved: the override resets on reload for new locations). After that, the other per-location
   game-state arrays (Coll bitsets are already 64 bits; timers +0x220, dust, S+0x4418, 0xFC records).
+
+
+## 2026-11-19 (later) — New location ids: music override hooks
+
+- **Inventory redone** (all literal words 0x4498..0x44C4 and `#0x49c]` operands, ARM9 + overlays): **12 accesses**,
+  not 7. Missed earlier: in Unk_0201f190_PropMsgHandler, `ldrb r1,[r0,r5]` + `add r2,r0,r5` at 0x0201F69C (stores
+  through r2 at 0x0201F6B8 / 0x0201F6D0), and two prop update reads 0x0201FFD8 / 0x02020C94 (`ldr =0x449C` form).
+  Full table: docs/formats/arm9.md §6.
+- **Hook**: godot/scripts/core/loc_ext.gd (`LocExt.music_hook`), 10 trampolines (`b` there and back, temps pushed,
+  flags kept), id ≥ 33 → 64-byte array in the ARM9 extension. Prototype option NEWLOC_MUSIC=1 (replaces the
+  0x02084C68 `mov r0,#0x2a` test patch). Generated code checked with capstone.
+- **Test** (melonDS): build/newloc_proto/loc34_m.nds boots into id 34, City Hall welcome popup, music track 5
+  (= the record music; sound state [0x020D5560] = 0x021424F8, current track +10), world+0xF4 = 34, S+0x449C+33..
+  unchanged (00 FF FF 00). Control loc6_m.nds (same hooks, id 6): same track, scene OK. **CONFIRMED** for the
+  read in Map_LoadLocation and the id < 33 path. Not exercised: writes (stereo / picker) and Map_PlayLocationMusic
+  (triggered by script sound op 0x2A0/0x2B and state returns; the phone menu does not call it).
+- **Next**: other per-location game-state arrays (timers Coll+0x220, dust, S+0x4418, 0xFC records), the hard-coded
+  indoor list of Map_UpdateLocationAmbience (a per-location table instead of the 0x020766CC test patch).
