@@ -114,6 +114,11 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
+- 2026-11-19 (latest): new location ids (34+, 33 stays "no location") — feasibility study, prototype
+  godot/tests/proto_newloc.gd, docs/journal.md. Id 34 = City Hall record loads and plays once the location table,
+  music read (0x02084C68), State2 render defaults and layout variant table are patched. OPEN: scene half as bright
+  as City Hall (cause not found, RAM diff in build/newloc_proto/); overlays not scanned; per-location game-state
+  arrays (music, timers, dust, 0xFC records…) have no room for ids 34+.
 - 2026-11-17 (latest): Test ▶ boots straight into the shown location (new game at the selected / first entry point):
   hook of the logo state 0x2B step change (0x0205440C) → ARM9 extension routine requesting state 2 mode 5 + state 0xC
   (docs/formats/arm9.md §5, godot/tests/test_boot.gd). CONFIRMED cold boot in melonDS (locations 6 and 9,

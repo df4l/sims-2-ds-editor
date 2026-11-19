@@ -257,3 +257,14 @@ Prop_CreatePlacementObject cases (docs/formats/roomfurn.md §4b).
 
 Startup requests at 0x02000DF4..0x02000EF0 (no function defined in Ghidra): state 0x2E (error cases) or 0x26 (0x18, 0, 3)
 + 0x2B step 3. Create-a-Sim end (overlay 3, 0x0214BD14): state 2 (5, 5, 8) + state 0xC. docs/formats/arm9.md §5.
+
+## Part 7 — Location id consumers (new location study, 2026-11-19)
+
+| Address | Name | Role | Status |
+|---|---|---|---|
+| 0x02085df8 | Map_SetLocationLightKeys | world+0x100: 2 pointers into the light key table 0x02121EFC + 16·id ({u32 count, ptr} × 2); id 33 special row, id > 33 default row | confirmed (code + RAM) |
+| 0x0205ee88 | Hotel_DustOnLocationEnter | dust struct: u32 cur/prev, u8[33] level +8, u32[33] time +0x2C; table 0x02131F34 | confirmed (code) |
+| 0x020637bc | Fire_OnLocationEnter | id → fire slot (6→6, 8→2, 10→5, 15→1, 18→0, 20→4, 29→3) | confirmed (code) |
+| 0x0208387c | Unk_0208387c_LocStateSpawnProps | per-location 0xFC-byte record at state+0x70+0xFC·id, respawns props 0x17/0x19 | partial |
+Data: layout variant table 0x02121EB4 (12 × {u8 loc, u8 variant[5] by chapter S+0x2F78}, read by Map_LoadLocation,
+loop bound at 0x02084C20); music override u8[33] at [0x0213E434]+0x449C (0x2A = use the record).

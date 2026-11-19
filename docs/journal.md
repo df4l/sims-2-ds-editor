@@ -980,3 +980,42 @@ Godot is now the only editor. Low-level tools for adding new content rather than
   plays) and location 9 entry 0. **CONFIRMED**. docs/formats/arm9.md §5.
 - **Editor**: Test ▶ uses the selected entry point (else the first one) of the shown location; File menu check
   "Test starts in this location (new game)" (on by default) turns it off.
+
+
+## 2026-11-19 — New location ids (34+): feasibility study, prototype
+
+Goal (agreed with the user): real new location ids, not the replacement of an existing one. Prototype:
+`godot/tests/proto_newloc.gd` (not a test: builds a ROM, options through environment variables), ROMs and
+screenshots in `build/newloc_proto/`.
+
+- **Inventory (code)**. 33 is the "no location" sentinel (world+0xF4, Map_FreeLocation, Door_TryEnter +0x4820,
+  Coll +0x336 link, Map_SetLocationLightKeys). About 25 ARM9 functions compare a location id with 0x21 (loops
+  `< 0x21`, sentinel tests); overlays not scanned yet. Per-location arrays **inside the game state** (fixed size 33,
+  followed by other fields): [S]+0x449C u8 music override (0x2A = record music), Coll +0x210/+0x218 bitsets (64 bits:
+  ids up to 63 fit), Coll +0x220 u32 timers, dust struct u8[33] +8 / u32[33] +0x2C, S+0x4418 u32[33],
+  `Unk_0208387c_LocStateSpawnProps` 0xFC-byte record per location at S+0x18+0x70 (id 34 would write into the NPC
+  records at S+0x21DC). S = [0x0213E434]. ARM9 tables: location table 0x021332E0 (only the 7 Map_GetLoc* accessors),
+  light keys 0x02121EFC (16 bytes per id, 1 literal), layout variant table 0x02121EB4 (12 rows {loc, variant by
+  chapter[5]}, 1 literal, loop bound `cmp r2,#0xc` at 0x02084C20), price/score 0x0211F9EC, dust 0x02131F34; name text
+  = 0x43 + id (id 33+ collides with other strings). Hard-coded id lists in State2_LocationEnter (+0x27c depth value,
+  FUN_020bc9f8 argument), Fire_OnLocationEnter, Unk_020844c4_LocField12, Map_EnterLocation (id 9).
+- **Decision**: keep 33 as the sentinel, number new locations from 34 (the `== 0x21` tests stay right).
+- **Test 1**: location table moved to the extension and grown to 64 entries, ids 33..63 → record of location 6
+  (City Hall), direct boot into id 34. Control: same ROM booting id 6 → City Hall OK (relocation alone is fine).
+  Id 34: **black screen, hang** in Map_LoadLocation (world+0xF4 = 34, location object never stored).
+  Cause: [S]+0x449C+34 is past the 33-byte music array and holds 0xFF after Game_InitNewGame → bad music id.
+- **Test 2**: + `ldrb r0,[r0,#0x49c]` at 0x02084C68 replaced by `mov r0,#0x2a` → **id 34 loads and plays**
+  (UI complete, Sim moves). Scene dark and partly wrong (far geometry missing).
+- **Test 3**: + State2_LocationEnter defaults set to the City Hall values (0x02077040 → mov r2,#0x2a000,
+  0x02077054 → mov r2,#0x14000): geometry correct. Light keys table moved/grown (0x02085E04 `cmp r1,#64`): used
+  (pointers = row 34) but no visible change.
+- **Test 4**: + variant table row for 34 (copy of the row of 6): the City Hall welcome popup plays (variant 3 at
+  chapter 0 instead of the default 1). **CONFIRMED**: the variant table decides which layout block runs.
+- **Open**: the scene is still about half as bright as City Hall (mean pixel 190 vs 418). Not from: light keys
+  (world+0x100.. identical to the control), music, variant, +0x27c / FUN_020bc9f8 args, world+0xF4 at run time
+  (set to 6 after the load: no change), S+0x4A80 / S+0x4ABC (poked: no change). A full 4 MB RAM diff against a
+  control built with the same patches (`loc6_f.nds`, same heap layout) shows only ~24 small differences; none is a
+  light value. Leads: GPU state / VRAM written once at load (material, palettes, toon / edge tables), the 2496-byte
+  block at 0x02166C90 that differs, statics at 0x0213D790..0x0213D7B0.
+- **Next**: find the brightness cause; scan the overlays for location ids; decide how per-location game-state arrays
+  are given to ids 34+ (relocated arrays + save format, or a donor slot).
