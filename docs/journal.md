@@ -1034,3 +1034,34 @@ screenshots in `build/newloc_proto/`.
   Real fix: a per-location "indoor" byte table in the extension, read by a small hook instead of the compare list.
 - **Next**: scan the overlays for location ids; per-location game-state arrays for ids 34+ (relocated arrays + save
   format, or a donor slot); per-location ambience flags.
+
+
+## 2026-11-19 (later) — New location ids: overlay scan
+
+- **Method**: `tools/ovscan.py` (capstone, ARM mode; no Thumb `bl` to a location function in any overlay) on the 19
+  BLZ-decompressed overlays (build/overlays/). It reports calls to the ~30 location functions, compares / movs with
+  0x20..0x22, literals to the location-indexed tables or to S = [0x0213E434], and offset-0xF4 loads (world+0xF4 =
+  current location id). Then I read each hit by hand. Most hits are not about locations: touch coordinates (ov18 `cmp r4,#0x21`),
+  item ids (ov02 / ov06 `cmp #0x22`), state object fields (ov13 +0x49C), UI box helpers (ov10 → 0x020840DC).
+- **Result, CONFIRMED (code)**. Overlay code that depends on a location id:
+  - **ov01** (states 0x20 / 0x36, construction menu): loop over ids 0..32 (`cmp r5,#0x21` at 0x02149CA0), shown if price
+    (0x0211F9EC through 0x02073F6C) ≠ 0, offered (0x020735A8), not owned, and S+0x4418[id] < S+0x480C; list
+    u32[33] at obj+0x4C (obj+0xD0 is the next field: exactly 33 slots). Shows name 0x43+id and parent 0x43+rec[3].
+    Purchase writes S+0x4418[id] and has hard-coded effects for ids 4, 7, 0x1A. → ids 34+ are never listed (safe).
+    To sell one: loop bound + list capacity + price table + S+0x4418 array.
+  - **ov04** (state 0x29): fixed room list {29, 8, 15, 18, 20} at 0x0214A7A0. Not tied to the 33 count.
+  - **ov05** (state 0x22, music picker): **writes** and reads S+0x449C[world+0xF4] (0x0214A124 / 0x0214A658).
+  - ov12 (state 0x2C) room furniture through Room_SlotFromLocation (rooms only); ov03 (Create-a-Sim) light keys with
+    the sentinel 33 and the new-game request (2, 5, location 5, entry 8); ov11 layout group / script (any id);
+    ov04 / ov12 / ov14 / ov15 Coll_GetScore (global). Not tied to the id count.
+- **Music override array, complete list of consumers** (S+0x449C, u8[33]; byte 0x44C0 = S+0x449C+36 is the
+  "outdoor" value read by Map_UpdateLocationAmbience): reads 0x02084C68 (Map_LoadLocation, patched by the
+  prototype), **0x02084D18 (Map_PlayLocationMusic, NOT patched)**, ov05 0x0214A658; writes ARM9 0x0201F640 /
+  0x0201F688 / 0x0201F700 (Unk_0201f190_PropMsgHandler, message 0x5E = stereo), ov05 0x0214A124. Map_PlayLocationMusic is
+  called from 6 ARM9 sites (0x0201F710, 0x0202856C, 0x0202E244, 0x0207C214, 0x0207CCFC, 0x020B03E4) and ov10
+  (states 0x16 / 0x17, on return to state 2).
+- **Prediction (not tested in the emulator)**: in prototype id 34, any Map_PlayLocationMusic call reads 0xFF →
+  `FUN_020a8068(0xFF − 0x2B)`, and a stereo / music picker write at id 36 would overwrite S+0x44C0.
+- **Next**: replace the 7 S+0x449C accesses with a hook that maps id ≥ 33 to a 64-byte array in the ARM9
+  extension (not saved: the override resets on reload for new locations). After that, the other per-location
+  game-state arrays (Coll bitsets are already 64 bits; timers +0x220, dust, S+0x4418, 0xFC records).

@@ -272,3 +272,16 @@ Startup requests at 0x02000DF4..0x02000EF0 (no function defined in Ghidra): stat
 | 0x020f7f94 | G3X_SetFog | NitroSDK: DISP3DCNT fog enable / mode / shift, FOG_OFFSET | confirmed (code) |
 Data: layout variant table 0x02121EB4 (12 × {u8 loc, u8 variant[5] by chapter S+0x2F78}, read by Map_LoadLocation,
 loop bound at 0x02084C20); music override u8[33] at [0x0213E434]+0x449C (0x2A = use the record).
+
+Overlay scan (2026-11-19, `tools/ovscan.py`). Ghidra has no functions at most overlay addresses, so these are
+listed as ovNN::address without renames.
+
+| Address | Name | Role | Status |
+|---|---|---|---|
+| 0x0201f190 | Unk_0201f190_PropMsgHandler | prop / actor message switch; message 0x5E (stereo) writes the music override S+0x449C[world+0xF4] (0x0201F640 / 0x0201F688 / 0x0201F700) then calls Map_PlayLocationMusic | partial |
+| 0x02073f6c | (FUN_) | &price/score table 0x0211F9EC[id] (4 bytes per id, no bound check) | confirmed (code) |
+| ov01::02149b8c | (none) | states 0x20 / 0x36 construction menu: list of ids 0..32 (`cmp r5,#0x21` at 0x02149CA0) with price ≠ 0, offered, not owned, S+0x4418[id] < S+0x480C; u32 list[33] at obj+0x4C (obj+0xD0 is the next field) | confirmed (code) |
+| ov01::0214a07c | (none) | on purchase: S+0x4418[id] = completion time; hard-coded effects for ids 4, 7, 0x1A | confirmed (code) |
+| ov04::0214a7a0 | (data) | state 0x29: fixed 5-id room list {29, 8, 15, 18, 20} + y positions at 0x0214A7A8 | confirmed (data) |
+| ov05::0214a124 / 0214a658 | (none) | state 0x22 (music picker): writes / reads the music override S+0x449C[world+0xF4] | confirmed (code) |
+
