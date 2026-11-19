@@ -1017,5 +1017,20 @@ screenshots in `build/newloc_proto/`.
   control built with the same patches (`loc6_f.nds`, same heap layout) shows only ~24 small differences; none is a
   light value. Leads: GPU state / VRAM written once at load (material, palettes, toon / edge tables), the 2496-byte
   block at 0x02166C90 that differs, statics at 0x0213D790..0x0213D7B0.
-- **Next**: find the brightness cause; scan the overlays for location ids; decide how per-location game-state arrays
-  are given to ids 34+ (relocated arrays + save format, or a donor slot).
+- **Brightness solved (same day)**: the 4 MB diff was misleading. The 2496-byte block at 0x02166C90 is the RNG
+  state (624 words, index at 0x0213D790), and the 0x8000xxxx values are timestamps. The real lead was the 3D
+  register: DISP3DCNT (0x04000060) = **0x699** for id 34 against 0x19 for City Hall, i.e. **fog on** (bit 7, shift 6).
+  Chain, from the code: G3X_SetFog (0x020F7F94) ← Amb_UpdateFogAndTint (0x0208A13C, fog off only for ambience
+  type 1; per-type rows 16 bytes at 0x02133494) ← Amb_SetType (0x0208AB54) ← Map_UpdateLocationAmbience
+  (0x02076230, every frame). In that function the type (r8) defaults to 1, but when S+0x44C0 ≤ 0 it is set to
+  **0xA** unless the location id is in a hard-coded list {2, 5, 6, 9, 0xE, 0x13, 0x14, 0x18, 0x19, 0x1C, 0x1E}
+  (compares at 0x0207667C..0x020766D0) — in effect the "indoor" list. RAM: controller at S+0x4648, type bytes
+  +0x14/+0x15/+0x23 = 0x0A (id 34) vs 0x01 (id 6). (The earlier poke of S+0x4ABC was undone by the next frame.)
+- **Test 5**: + `cmp r4,#0x1e` at 0x020766CC replaced by `cmp r4,#0x22` (test only: steals the slot of id 0x1E).
+  DISP3DCNT = 0x19, and after closing the welcome popup the top screen is **pixel-identical** to the id-6 control
+  (`build/newloc_proto/l34g_open.png` vs `l6_open.png`; without the patch 45 038 pixels differ). **CONFIRMED.**
+- Same function, other hard-coded id lists (not yet handled for 34+): ambient sound jump table on id ≤ 0x18 at
+  0x0207629C, "no ambient sound" list at 0x0207659C..0x020765E8, ids 5 / 9 / 0x13 / 0x14 special cases.
+  Real fix: a per-location "indoor" byte table in the extension, read by a small hook instead of the compare list.
+- **Next**: scan the overlays for location ids; per-location game-state arrays for ids 34+ (relocated arrays + save
+  format, or a donor slot); per-location ambience flags.

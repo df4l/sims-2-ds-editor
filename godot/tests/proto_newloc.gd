@@ -2,6 +2,8 @@ extends SceneTree
 ## PROTOTYPE (not a test yet): location table moved to the extension and grown to `n` entries; ids 33.. point at the
 ## record of `src`; direct boot into location `loc`.
 ##   Godot --headless --path godot --script res://tests/proto_newloc.gd -- rom.nds out.nds src loc [n]
+## Full working recipe for 34 = City Hall copy (docs/journal.md, test 5):
+##   NEWLOC_LIGHT=1 NEWLOC_RENDER=1 NEWLOC_VARIANT=1 NEWLOC_PATCH=0x02084C68=0xE3A0002A,0x020766CC=0xE3540022 ... 6 34
 
 const LOC_TABLE := 0x021332E0
 

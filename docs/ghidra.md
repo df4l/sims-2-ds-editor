@@ -266,5 +266,9 @@ Startup requests at 0x02000DF4..0x02000EF0 (no function defined in Ghidra): stat
 | 0x0205ee88 | Hotel_DustOnLocationEnter | dust struct: u32 cur/prev, u8[33] level +8, u32[33] time +0x2C; table 0x02131F34 | confirmed (code) |
 | 0x020637bc | Fire_OnLocationEnter | id → fire slot (6→6, 8→2, 10→5, 15→1, 18→0, 20→4, 29→3) | confirmed (code) |
 | 0x0208387c | Unk_0208387c_LocStateSpawnProps | per-location 0xFC-byte record at state+0x70+0xFC·id, respawns props 0x17/0x19 | partial |
+| 0x02076230 | Map_UpdateLocationAmbience | every frame: ambience type (default 1; 0xA "outdoor" when S+0x44C0 ≤ 0 and id not in {2,5,6,9,0xE,0x13,0x14,0x18,0x19,0x1C,0x1E}, compares 0x0207667C..0x020766D0), ambient sounds by id | confirmed (code + emulator) |
+| 0x0208ab54 | Amb_SetType | ambience controller (S+0x4648): set type (+0x14/+0x15/+0x23) and fade time | confirmed (code + RAM) |
+| 0x0208a13c | Amb_UpdateFogAndTint | fades between ambience types (rows 16 bytes at 0x02133494); type 1 → fog off, else fog on (shift 6) + fog colour/table | confirmed (code + emulator) |
+| 0x020f7f94 | G3X_SetFog | NitroSDK: DISP3DCNT fog enable / mode / shift, FOG_OFFSET | confirmed (code) |
 Data: layout variant table 0x02121EB4 (12 × {u8 loc, u8 variant[5] by chapter S+0x2F78}, read by Map_LoadLocation,
 loop bound at 0x02084C20); music override u8[33] at [0x0213E434]+0x449C (0x2A = use the record).
