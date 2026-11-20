@@ -8,7 +8,8 @@ extends SceneTree
 ##                      solid block (-col) next to the entry;
 ##   scene_35.nds       direct boot into 35 (copy of City Hall) whose own scene = City Hall's models re-encoded by
 ##                      NsbmdWriter and collision = City Hall's cells recompiled by BspBuild (must look and collide
-##                      like City Hall, minus its texture animations);
+##                      like City Hall, minus its texture animations), textures in 8bpp;
+##   scene_36.nds       same as 35 with 4x4-compressed textures (Tex4x4);
 ##   scene_6.nds        control: direct boot into City Hall (6), same build path.
 
 var fails := 0
@@ -114,6 +115,7 @@ func _init() -> void:
 
 	check(pr.add_new_location(6, "Test Room") == "" and pr.last_index == 34, "new location 34 from City Hall")
 	check(pr.add_new_location(6, "Hall Rewritten") == "" and pr.last_index == 35, "new location 35 from City Hall")
+	check(pr.add_new_location(6, "Hall 4x4") == "" and pr.last_index == 36, "new location 36 from City Hall")
 	var lay := pr.load_layout(34)
 	var e0: PackedByteArray = lay.entries[0]
 	var p := Vector3(e0.decode_s16(0), e0.decode_s16(2), e0.decode_s16(4))
@@ -165,7 +167,29 @@ func _init() -> void:
 			planes.append([pl[1][0] / 4096.0, pl[1][1] / 4096.0, pl[1][2] / 4096.0, pl[2] / 4096.0])
 		si.brushes.append(planes)
 	var tex35 := 256 if args.size() < 3 else args[2].to_int()   # optional 3rd argument: texture size limit of 35
-	check(pr.import_scene_from(35, si, tex35) == "", "35: City Hall models + cells imported (%s)" % pr.last_import.get("model"))
+	check(pr.import_scene_from(35, si, tex35, false) == "", "35: City Hall models + cells imported, 8bpp (%s)" % pr.last_import.get("model"))
+	var t0 := Time.get_ticks_msec()
+	check(pr.import_scene_from(36, si, tex35, true) == "", "36: same in 4x4 (%s)" % pr.last_import.get("model"))
+	var m36: Dictionary = pr.last_import.model
+	print("    4x4 import: %d ms" % (Time.get_ticks_msec() - t0))
+	check(m36.tex4 > 0 and m36.tex4_bytes <= NsbmdWriter.TEX4_BUDGET and m36.tex_bytes + m36.tex4_bytes * 3 / 2 <= NsbmdWriter.VRAM_BUDGET
+		and m36.pal_bytes <= NsbmdWriter.PAL_BUDGET and m36.downscaled.is_empty(),
+		"36: %d textures 4x4, within budgets, nothing halved" % m36.tex4)
+	# the files read back with their 4x4 textures (texels + indices where the params point)
+	var n4 := 0
+	var bad4 := 0
+	for e in pr.scene_entries(36):
+		var b := Nsbmd.new()
+		if not b.parse(pr.current("model", e)):
+			bad4 += 1
+			continue
+		for name in b.textures:
+			var tx: Dictionary = b.textures[name]
+			if tx.fmt == 5:
+				n4 += 1
+				if tx.data2.size() != tx.data1.size() / 2 or tx.data1.size() != tx.w * tx.h / 4:
+					bad4 += 1
+	check(n4 == m36.tex4 and bad4 == 0, "36: %d model files read back, %d 4x4 textures, %d bad" % [pr.scene_entries(36).size(), n4, bad4])
 
 	# --- build ---
 	var rom := pr.build_rom([34, e34])
@@ -173,12 +197,15 @@ func _init() -> void:
 	var p34 := out_dir.path_join("scene_34.nds")
 	_save(p34, rom)
 	_save(out_dir.path_join("scene_35.nds"), pr.build_rom([35, e34]))
+	_save(out_dir.path_join("scene_36.nds"), pr.build_rom([36, e34]))
 	_save(out_dir.path_join("scene_6.nds"), pr.build_rom([6, e34]))
 	var g2 := GameData.new()
 	check(g2.open(p34), "exported ROM reopens")
 	var nf35 := pr.scene_entries(35).size()
 	check(nf35 == 2, "35: textures over one file's VRAM block -> split into %d model files" % nf35)
-	check(g2.rombin.count() == n0 + 5 + nf35, "appended entries: 2 layouts, 2 collisions, 1 + %d models (%d)" % [nf35, g2.rombin.count() - n0])
+	var nf36 := pr.scene_entries(36).size()
+	check(g2.rombin.count() == n0 + 7 + nf35 + nf36, "appended entries: 3 layouts, 3 collisions, 1 + %d + %d models (%d)" % [
+		nf35, nf36, g2.rombin.count() - n0])
 	var m := Arm9Mod.new(g2.a9)
 	# record 34 in the extension: the one whose model entry is n0 + 2
 	var found := false

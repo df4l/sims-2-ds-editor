@@ -46,7 +46,9 @@ The Godot binaries are not committed (see `.gitignore`).
      colours for baked lighting, then File > Export > glTF 2.0. Collision: every visible face gets a thin solid slab
      behind it; objects named `…-col` are invisible solid blocks (convex), `…-nocol` are visible but not solid.
      Keep the floor about 1 unit under the entry points (move them with the layout tools). Textures are fitted to
-     the game's texture memory automatically (the report says what was reduced). No lights / animations yet.
+     the game's texture memory automatically (the report says what was reduced). "4x4 textures" (on by default)
+     stores textures of more than 16 colours in the DS 4x4 format like most of the game's own: about twice the
+     texture detail in the same memory, slightly lossy. No lights / animations yet.
    - Ctrl+Z undo, **Revert location**, File > Discard every edit.
 4. **Export ROM…** writes a new `.nds`. The opened ROM is never written.
    - File > **Export as BPS patch…** writes a patch of the opened ROM instead (apply with Flips, ROM Patcher JS…).
@@ -75,6 +77,7 @@ so reopening the same ROM restores them.
 | `scripts/core/roomfurn.gd` | hotel room furniture placement, prop variant textures (`roomfurn.py`) |
 | `scripts/core/nsbmd.gd` | BMD0 → Godot mesh + textures (nitrogen + `nitro.py` UV fixes) |
 | `scripts/core/nsbmd_write.gd` | Godot meshes → BMD0 scene model files, palette textures, VRAM budgets (`docs/formats/bmd0.md`) |
+| `scripts/core/tex4x4.gd` | 4x4-compressed texture encoder (colour-pair codebook, `docs/formats/bmd0.md` §6) |
 | `scripts/core/bsp_build.gd` | convex brushes → collision BSP (compiler), brushes from meshes |
 | `scripts/core/scene_import.gd` | glTF / GLB scene → surfaces + collision brushes |
 | `scripts/core/loc_ext.gd` | new location ids 34..63: ARM9 tables and hooks (`docs/formats/arm9.md` §6-7) |
@@ -98,6 +101,8 @@ godot --headless --path . --script res://tests/test_newloc.gd -- sims2.nds out_d
 godot --headless --path . --script res://tests/test_bmd0.gd -- sims2.nds out_dir   # BMD0 writer: dictionaries, models read -> write -> read
 godot --headless --path . --script res://tests/test_bspbuild.gd -- sims2.nds [locs]   # BSP compiler: boxes, original locations recompiled
 godot --headless --path . --script res://tests/test_scene.gd -- sims2.nds out_dir [max_tex]   # own scenes: GLB import, export, test ROMs
+godot --headless --path . --script res://tests/test_tex4x4.gd -- sims2.nds [n]   # 4x4 texture encoder: quality vs the game's, format
+godot --headless --path . --script res://tests/probe_tex4x4.gd -- sims2.nds out_dir   # 4x4 VRAM probe ROMs (emulator, not pass / fail)
 godot --path . --script res://tests/test_dialogue_ui.gd -- sims2.nds   # Dialogue tab smoke test (needs a window)
 godot --path . --script res://tests/test_locations_ui.gd -- sims2.nds [out_dir/test_room.glb]   # Locations tab (+ scene import)
 godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]]   # UI screenshot

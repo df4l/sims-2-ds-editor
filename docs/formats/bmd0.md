@@ -81,13 +81,41 @@ display lists BEGIN_VTXS triangles, COLOR / TEXCOORD when they change, VTX_16, E
 word). posScale = smallest power of two with |v| / posScale < 8. UVs are shifted per triangle by whole repeats
 (texture repeat on) so that TEXCOORD fits s16 (1/16 texel). Textures: 4bpp (≤ 16 colours) or 8bpp (exact up to 256
 colours, else median cut), colour 0 transparent when the image has alpha < 0.5, sizes rounded to powers of two
-(8 .. 256 by default). Not used: 4x4 compression, normals / lights, animations.
+(8 .. 256 by default), or 4x4-compressed (§6, option on by default in the editor). Not used: normals / lights,
+animations.
 Checks: read → write → read of the 65 scene models gives the same triangles (within one VTX_16 step) and colours;
 in game, the room of test_scene.gd (location 34) and City Hall re-encoded (location 35) render as expected.
 
-## 6. Open points
-- 4x4 compression encoder (3 bpp instead of 8, and the separate 4x4 VRAM block): would allow ~2.5× more texture
-  detail.
+## 6. 4x4-compressed textures (format 5) — writer CONFIRMED (emulator)
+Encoder `godot/scripts/core/tex4x4.gd` (`Tex4x4`), used by `NsbmdWriter` when `tex4x4` is on for textures of more
+than 16 colours (≤ 16 stay 4bpp, exact).
+- **Format** (GBATEK, reader `Nsbmd._decode_4x4`): per 4x4 block a u32 of 2-bit texels (bit 2 (4y + x)) in the 4x4
+  texel block (TEX0 +0x24, size +0x1C) and a u16 in the index block (+0x28, at texel offset / 2): bits 0..13 =
+  palette offset in 4-byte units from the material's palette base, bits 14..15 = mode (0: 3 colours + transparent,
+  1: c0, c1, (c0+c1)/2, transparent, 2: 4 colours, 3: c0, c1, (5c0+3c1)/8, (3c0+5c1)/8). Texture param offset =
+  offset in the 4x4 texel block >> 3. TEX0 order like the originals: dicts, plain texels, 4x4 texels, 4x4 indices,
+  palettes.
+- **The game's own 4x4 textures share colour pairs** (CONFIRMED, survey of 326 TEX0 blocks): 197 037 blocks in mode
+  3, 10 720 in mode 1, 8 899 in mode 0, no mode 2; e.g. one file has 9 632 blocks on 276 palette slots. So the
+  encoder builds a codebook of colour PAIRS (one index step = 2 colours = 4 bytes): mode 3 for opaque blocks, mode 1
+  for blocks with transparent texels (alpha < 128). Steps: best pair per block (principal axis + least squares) →
+  median cut of the pairs (6-D) into ≤ `pairs` boxes → least-squares refit per box → 2 passes of "each block takes
+  the best of its 6 nearest pairs, pairs refitted".
+- **Quality** (tests/test_tex4x4.gd): the game's 4x4 textures decoded and re-encoded with the game's own pair
+  count come back at RMS 0.61 / 255 (52.5 dB, 40 textures; the game's encoder = 0); the game's 8bpp textures as 4x4
+  (one pair per 8 blocks): RMS 4.39 (35.3 dB), better than 16-colour palettes (4.56). ~150 ms per 128×128 texture.
+- **Budgets** (emulator probes, `godot/tests/probe_tex4x4.gd`, City Hall geometry with unique 256×256 textures,
+  `build/scene_test/probe_*.png`): 64 KiB of 4x4 texels in one file render; 96 KiB in one file → garbage; 128 KiB in
+  one file → garbage; 2 files × 64 KiB → the second file's textures garbage. So the 4x4 space left to a location's
+  scene is between 64 and 96 KiB **per location** (the Sim, NPCs and props use the rest, ASSUMED). Writer:
+  `FILE4_BUDGET` 65 536 per file, `TEX4_BUDGET` 67 584 per location (Atrium, the most an original uses),
+  `VRAM_BUDGET` plain + 1.5 × 4x4 ≤ 190 784 (Store). Over the 4x4 budget the largest 4x4 texture goes 8bpp when the
+  plain budgets have room, else is halved; over the palette budget the largest 4x4 palette halves its pairs.
+- **In game**: City Hall re-encoded in 4x4 (location 36, `test_scene.gd`, 49 textures, 56 960 B of 4x4 texels in
+  one file, none halved; 8bpp needed 2 files and halved 10 textures) renders like the original
+  (`build/scene_test/scene_36_4x4_1file.png`).
+
+## 7. Open points
 - Exact VRAM limits (between 50 944 and 149 760 for one file; how much the Sims / NPCs / props take).
 - Lit materials (normals) and texture animations (BTA0) for own scenes.
 - The location's "special model" (record +0x10: flag 0x10000 + material flag 0x400 cleared; City Hall's is the

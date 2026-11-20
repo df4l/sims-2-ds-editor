@@ -361,22 +361,24 @@ var last_import := {}   # report of the last import_scene: model / collision sta
 
 ## Give new location id its own scene from a glTF / GLB file: scene model (NsbmdWriter) + collision (BspBuild).
 ## scale = game units per file unit; thickness = depth of the collision slabs made from the visible faces;
-## auto_collision false = only the file's "-col" objects are solid.
+## auto_collision false = only the file's "-col" objects are solid; tex4x4 = textures of more than 16 colours are
+## 4x4-compressed (about 2.5x more texture detail in the same VRAM, slightly lossy) instead of 8bpp.
 ## One undo step. "" or an error (nothing changed).
-func import_scene(id: int, path: String, scale := 1.0, thickness := 0.5, max_tex := 256, auto_collision := true) -> String:
+func import_scene(id: int, path: String, scale := 1.0, thickness := 0.5, max_tex := 256, auto_collision := true,
+		tex4x4 := true) -> String:
 	if newloc(id).is_empty():
 		return "location %d is not a new location: only new locations can get their own scene" % id
 	var si := SceneImport.new()
 	if not si.load_file(path, scale, thickness, auto_collision):
 		return si.error
-	return import_scene_from(id, si, max_tex)
+	return import_scene_from(id, si, max_tex, tex4x4)
 
 
-func import_scene_from(id: int, si: SceneImport, max_tex := 256) -> String:
+func import_scene_from(id: int, si: SceneImport, max_tex := 256, tex4x4 := true) -> String:
 	if newloc(id).is_empty():
 		return "location %d is not a new location: only new locations can get their own scene" % id
 	var w := NsbmdWriter.new()
-	var files := w.build_split("Loc%d" % id, si.surfaces, max_tex)
+	var files := w.build_split("Loc%d" % id, si.surfaces, max_tex, tex4x4)
 	if files.is_empty():
 		return "scene model: " + w.error
 	var bb := BspBuild.new()

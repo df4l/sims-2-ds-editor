@@ -1158,3 +1158,28 @@ Goal: a new location (34..63) gets its own geometry from a glTF scene instead of
   bookmark on Clsn_TraceBoxBsp (trace stack).
 - Open: 4x4 texture encoder (2.5× more texture detail, separate VRAM block), lit materials, texture animations,
   camera of a new location (it keeps the template's: in the test room it looked from outside the walls at first).
+
+
+## 2026-11-20 (latest) — 4x4 texture encoder for own scenes
+
+Goal: more texture detail in imported scenes (8bpp City Hall needed 10 textures halved).
+- **Survey of the game's 4x4 textures** (hypothesis: one palette entry per block, as in a naive encoder). Script over
+  the 326 TEX0 blocks of rom_bin/dec: per file, blocks vs distinct palette indices, modes. Result: heavy sharing
+  (e.g. 9 632 blocks on 276 palette slots), mode 3 for 91 %, mode 2 never. Hypothesis rejected → codebook of colour
+  pairs. Also: TEX0 order dicts / plain / 4x4 texels / indices / palettes; per file ≤ 38 528 B of 4x4 texels (≤ 32 768
+  in scene models), per location ≤ 67 584 (Atrium); plain + 1.5 × 4x4 ≤ 190 784 (Store).
+- **Ghidra**: Gfx_AllocModelTexVram (0x020bd468) makes three allocations through function pointers (plain texels,
+  4x4 texels with flag 1, palettes): the limits are runtime state, measured in the emulator instead.
+- **Encoder** godot/scripts/core/tex4x4.gd (docs/formats/bmd0.md §6). Test godot/tests/test_tex4x4.gd: the game's
+  4x4 textures re-encoded with the game's pair count: RMS 0.30 (20 textures) / 0.61 (40) per 255, PSNR 58.6 / 52.5 dB
+  — close to the game's encoder; 8bpp textures as 4x4: 35-36 dB, better than 16-colour palettes; the encoder's own
+  error equals the error after Nsbmd._decode_4x4 (format written as read); transparent texels stay transparent.
+- **Writer**: textures > 16 colours → 4x4 when `tex4x4` (editor checkbox "4x4 textures", on by default); bins packed
+  on both plain and 4x4 sizes. test_scene.gd: new location 36 = City Hall re-encoded in 4x4.
+- **Emulator**: 36 renders like City Hall (2 files of 4x4 first, then 1 file of 56 960 B). CONFIRMED.
+- **VRAM probes** (godot/tests/probe_tex4x4.gd, City Hall geometry, N unique 256×256 textures): 64 KiB in one file OK;
+  96 KiB in one file, 128 KiB in one file, 2 × 64 KiB → garbage (whole file / second file). First probe used 32-px
+  checkers: a speckled wall could have been aliasing → redone with 128-px quadrants, still speckled → real garbage.
+  Conclusion: the 4x4 space left per location is between 64 and 96 KiB (rest used by Sims / NPCs / props, ASSUMED).
+  Budgets: 65 536 per file, 67 584 per location.
+- Open: lit materials, texture animations, per-location camera; finer 4x4 limit (64..96 KiB, depends on the NPCs?).

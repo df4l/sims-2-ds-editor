@@ -888,8 +888,13 @@ func _render_locations(force := false) -> void:
 			"On: every visible face gets a thin solid slab behind it (objects named ...-nocol excepted).
 "
 			+ "Off: only the objects named ...-col are solid (one convex block each, not drawn).")
+		var c4 := W.toggle("4x4 textures", true, func(_on): pass,
+			"On: textures of more than 16 colours are 4x4-compressed like most of the game's own (3 bits per texel,
+"
+			+ "about 2.5x more texture detail fits; slightly lossy). Off: 8bpp palettes (exact up to 256 colours).")
 		var scene_btns := [W.label("3D scene", null, false), W.button("Import .glb / .gltf…", func():
-			_scene_opts = {"id": id, "scale": sc.value, "thickness": th.value, "auto": auto.button_pressed}
+			_scene_opts = {"id": id, "scale": sc.value, "thickness": th.value, "auto": auto.button_pressed,
+				"tex4x4": c4.button_pressed}
 			scene_dlg.popup_centered_ratio(0.7),
 			"Replace this location's scene models and collision by a glTF scene (Blender: File > Export > glTF 2.0).
 "
@@ -900,7 +905,7 @@ func _render_locations(force := false) -> void:
 					status("Location %d: back to the scene and collision of %d" % [id, L.src]),
 				"Back to the template's scene models and collision"))
 		box.add_child(W.hbox(scene_btns))
-		box.add_child(W.hbox([W.label("scale", null, false), sc, W.label("slab depth", null, false), th, auto]))
+		box.add_child(W.hbox([W.label("scale", null, false), sc, W.label("slab depth", null, false), th, auto, c4]))
 		box.add_child(W.hbox([
 			W.button("Apply", func():
 				if apply(proj.set_new_location(id, {"alias": W.option_value(alias), "price": int(price.value),
@@ -947,7 +952,8 @@ func _import_scene(path: String) -> void:
 		return
 	status("Importing %s…" % path.get_file())
 	var t0 := Time.get_ticks_msec()
-	var err := proj.import_scene(id, path, _scene_opts.scale, _scene_opts.thickness, 256, _scene_opts.auto)
+	var err := proj.import_scene(id, path, _scene_opts.scale, _scene_opts.thickness, 256, _scene_opts.auto,
+		_scene_opts.get("tex4x4", true))
 	if not apply(err):
 		return
 	var r: Dictionary = proj.last_import
@@ -955,15 +961,18 @@ func _import_scene(path: String) -> void:
 	var c: Dictionary = r.collision
 	var lines := PackedStringArray([
 		"%s imported into location %d (%.1f s)." % [path.get_file(), id, (Time.get_ticks_msec() - t0) / 1000.0],
-		"Model: %d triangles, %d textures, %d model file(s), %d KiB of texels (budget %d) + %d B of palettes." % [
-			m.triangles, m.textures, m.get("files", 1), m.tex_bytes / 1024, NsbmdWriter.TEX_BUDGET / 1024, m.pal_bytes],
+		"Model: %d triangles, %d textures (%d 4x4), %d model file(s); texels %d KiB plain (budget %d) + %d KiB 4x4 (budget %d); %d B of palettes." % [
+			m.triangles, m.textures, m.get("tex4", 0), m.get("files", 1), m.tex_bytes / 1024, NsbmdWriter.TEX_BUDGET / 1024,
+			m.get("tex4_bytes", 0) / 1024, NsbmdWriter.TEX4_BUDGET / 1024, m.pal_bytes],
 		"Collision: %d solid blocks (%d '-col' objects) -> %d nodes, depth %d (max %d), %d KiB." % [c.used_brushes,
 			r.col_objects, c.nodes, c.depth, BspBuild.MAX_DEPTH, c.bytes / 1024],
 		"Size: %s" % str((r.aabb as AABB).size.snapped(Vector3(0.1, 0.1, 0.1)))])
 	if not m.get("downscaled", []).is_empty():
 		lines.append("Halved to fit the texture memory: %d texture(s)." % m.downscaled.size())
 	if not m.get("recoloured", []).is_empty():
-		lines.append("Reduced to 16 colours (palette memory): %d texture(s)." % m.recoloured.size())
+		lines.append("Fewer colours (palette memory): %d texture(s)." % m.recoloured.size())
+	if not m.get("unpacked", []).is_empty():
+		lines.append("Kept in 8bpp (4x4 memory full): %d texture(s)." % m.unpacked.size())
 	if m.uv_clamped > 0:
 		lines.append("Warning: %d texture coordinates out of range (a triangle spans more than ~8 repeats)." % m.uv_clamped)
 	for w in r.warnings:

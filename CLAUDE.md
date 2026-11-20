@@ -114,6 +114,12 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations, own 3D scenes)
+- 2026-11-20 (latest): 4x4 texture encoder DONE (godot/scripts/core/tex4x4.gd, docs/formats/bmd0.md §6): colour-pair
+  codebook like the game's own 4x4 textures (re-encodes them at 52-58 dB); scene import option "4x4 textures" (on by
+  default). CONFIRMED in melonDS: City Hall in 4x4 (location 36) = City Hall, 49 textures none halved (8bpp: 10
+  halved). VRAM probes: 64 KiB of 4x4 per location renders, 96 KiB does not → budgets 65 536 / file, 67 584 /
+  location. Tests: test_tex4x4, test_scene (+36); probe ROMs: tests/probe_tex4x4.gd. Next ideas: lit materials,
+  per-location camera, texture animations.
 - 2026-11-20 (latest): own 3D scenes for new locations DONE. glTF / GLB → BMD0 files (NsbmdWriter,
   docs/formats/bmd0.md) + compiled BSP (BspBuild, docs/formats/location.md §3); Locations tab "Import .glb / .gltf".
   CONFIRMED in melonDS (build/scene_test/): test room drawn and solid as designed (34); City Hall re-encoded (35)

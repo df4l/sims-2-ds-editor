@@ -7,7 +7,8 @@ extends RefCounted
 ##    colour comes from COLOR commands (baked lighting, like the original scenes);
 ##  - display lists: BEGIN_VTXS triangles, COLOR / TEXCOORD when they change, VTX_16, END_VTXS;
 ##  - textures: palette formats, 4bpp (<= 16 colours) or 8bpp (median cut to 256), colour 0 transparent when the
-##    image has alpha. Sizes are powers of two (8..max_tex).
+##    image has alpha; with tex4x4, images of more than 16 colours are 4x4-compressed (Tex4x4, 3 bpp, own VRAM
+##    block). Sizes are powers of two (8..max_tex).
 ## Name dictionaries carry the NNS patricia tree (the runtime binds textures / palettes to materials by name through
 ## it): node i + 1 holds entry i, root = node 0 (refBit 127, zero key). Checked byte-identical on every dictionary of
 ## the game's models (tests/test_bmd0.gd).
@@ -30,6 +31,18 @@ const PAL_BUDGET := 17120
 ## re-encoded as ONE file with 149 760 broke the textures (allocation failed, NNS setup FUN_020bd468 returns 0).
 const FILE_BUDGET := 116480
 const MAX_FILES := 4
+## 4x4-compressed textures (format 5, Tex4x4): texels (2 bpp) in their own allocation, indices (1 bpp) beside them
+## in VRAM slot 1. Emulator probes (City Hall geometry, tests/probe_tex4x4.gd, build/scene_test/probe_*.png): 64 KiB of
+## 4x4 texels in one file render; 96 KiB in one file, or 2 files of 64 KiB, do not (the 4x4 space left by the Sim,
+## NPCs and props is between 64 and 96 KiB per location). Location budget = the most an original uses (Atrium,
+## 67 584, with its own NPCs). Plain + 1.5 × 4x4 (texels + indices) per location <= 190 784 (Store: 118 784 + 1.5 ×
+## 48 000).
+static var FILE4_BUDGET := 65536   # static: probes override them
+static var TEX4_BUDGET := 67584
+static var VRAM_BUDGET := 190784
+## Colour pairs of a 4x4 texture when not given: one per 8 blocks (the game's own use one per ~35), 16..512.
+const PAIRS_PER_BLOCKS := 8
+const MAX_PAIRS := 512
 
 var error := ""
 var stats := {}
@@ -161,7 +174,9 @@ static func _c555(c: int) -> int:
 
 
 ## Image -> {fmt, w, h, data, palette (PackedByteArray of RGB555), color0, colors (used, before padding), lossy}.
-static func encode_texture(src: Image, max_tex := 256, max_colors := 256) -> Dictionary:
+## pairs != 0: images with more than 16 colours become 4x4-compressed (fmt 5, + idx = the 4x4 indices, colors =
+## pairs) with at most `pairs` colour pairs (-1 = automatic, PAIRS_PER_BLOCKS); max_colors is then unused.
+static func encode_texture(src: Image, max_tex := 256, max_colors := 256, pairs := 0) -> Dictionary:
 	var img: Image = src.duplicate()
 	if img.is_compressed():
 		img.decompress()
@@ -189,6 +204,15 @@ static func encode_texture(src: Image, max_tex := 256, max_colors := 256) -> Dic
 		keys[i] = c
 		counts[c] = counts.get(c, 0) + 1
 	var first := 1 if transparent else 0
+	if pairs != 0 and counts.size() > 16 - first:
+		var nblk := npx / 16
+		var np := pairs if pairs > 0 else clampi(nblk / PAIRS_PER_BLOCKS, 16, MAX_PAIRS)
+		var enc := Tex4x4.encode(img, mini(np, nblk))
+		var pal4: PackedByteArray = enc.palette
+		while pal4.size() % 16:   # next palette on 16 bytes
+			pal4.append(0)
+		return {"fmt": 5, "w": w, "h": h, "data": enc.data, "idx": enc.idx, "palette": pal4, "color0": false,
+			"colors": enc.pairs, "lossy": true}
 	var room := clampi(max_colors, 2, 256) - first
 	var lut := {}        # rgb555 -> palette index
 	var pal := PackedInt32Array()
@@ -319,10 +343,10 @@ static func _fx16(v: float) -> int:
 ## surfaces: [{verts: PackedVector3Array, indices: PackedInt32Array (Godot winding), uvs: PackedVector2Array (or
 ## empty), colors: PackedColorArray (or empty, sRGB / DS values), image: Image or null, double_sided: bool,
 ## alpha: float 0..1, color: Color (multiplies the vertex colours)}]. Returns the BMD0 bytes (empty + error on failure).
-func build(model_name: String, surfaces: Array, max_tex := 256) -> PackedByteArray:
+func build(model_name: String, surfaces: Array, max_tex := 256, tex4x4 := false) -> PackedByteArray:
 	error = ""
-	stats = {"vertices": 0, "triangles": 0, "uv_clamped": 0, "textures": 0, "tex_bytes": 0, "pal_bytes": 0,
-		"lossy": []}
+	stats = {"vertices": 0, "triangles": 0, "uv_clamped": 0, "textures": 0, "tex_bytes": 0, "tex4_bytes": 0,
+		"pal_bytes": 0, "lossy": []}
 	var surfs := surfaces.filter(func(s): return not s.indices.is_empty())
 	if surfs.is_empty():
 		error = "nothing to draw"
@@ -330,50 +354,18 @@ func build(model_name: String, surfaces: Array, max_tex := 256) -> PackedByteArr
 	if surfs.size() > 255:
 		error = "%d surfaces (materials), 255 at most" % surfs.size()
 		return PackedByteArray()
-	# textures (same pixels -> one texture)
-	var tex_of := {}      # pixels key -> texture index
-	var texs := []
-	var mat_tex := []     # per surface: texture index or -1
-	for s in surfs:
-		var img = s.get("image")
-		if img == null or s.uvs.is_empty():
-			mat_tex.append(-1)
-			continue
-		var key := _image_key(img)
-		if not tex_of.has(key):
-			var t := encode_texture(img, max_tex)
-			t["name"] = "tex%d" % texs.size()
-			t["src"] = img
-			t["max"] = max_tex
-			t["ncol"] = 256
-			tex_of[key] = texs.size()
-			texs.append(t)
-		mat_tex.append(tex_of[key])
-	_fit_budget(texs)
-	for t in texs:
-		if t.lossy:
-			stats.lossy.append(t.name)
-	stats.textures = texs.size()
-
+	var mat_tex := []
+	var texs := _collect_textures(surfs, max_tex, tex4x4, mat_tex)
 	stats.size = 0
 	var one := _build_one(model_name, surfs, texs, mat_tex)
 	return one
 
 
-## Like build(), split into several BMD0 files (at most MAX_FILES) so that each file's plain texels fit FILE_BUDGET
-## (one VRAM allocation per file, see TEX_BUDGET). Textures are packed first-fit by decreasing size; untextured
-## surfaces go with the first file. Returns [] + error on failure.
-func build_split(model_name: String, surfaces: Array, max_tex := 256) -> Array:
-	error = ""
-	stats = {"vertices": 0, "triangles": 0, "uv_clamped": 0, "textures": 0, "tex_bytes": 0, "pal_bytes": 0,
-		"lossy": [], "size": 0}
-	var surfs := surfaces.filter(func(s): return not s.indices.is_empty())
-	if surfs.is_empty():
-		error = "nothing to draw"
-		return []
+## Textures of the surfaces (same pixels -> one texture), encoded and fitted to the budgets. Fills mat_tex (per
+## surface: texture index or -1) and stats (textures, lossy).
+func _collect_textures(surfs: Array, max_tex: int, tex4x4: bool, mat_tex: Array) -> Array:
 	var tex_of := {}      # pixels key -> texture index
 	var texs := []
-	var mat_tex := []     # per surface: texture index or -1
 	for s in surfs:
 		var img = s.get("image")
 		if img == null or s.uvs.is_empty():
@@ -381,11 +373,12 @@ func build_split(model_name: String, surfaces: Array, max_tex := 256) -> Array:
 			continue
 		var key := _image_key(img)
 		if not tex_of.has(key):
-			var t := encode_texture(img, max_tex)
+			var t := encode_texture(img, max_tex, 256, -1 if tex4x4 else 0)
 			t["name"] = "tex%d" % texs.size()
 			t["src"] = img
 			t["max"] = max_tex
 			t["ncol"] = 256
+			t["pairs"] = -1 if t.fmt == 5 else 0
 			tex_of[key] = texs.size()
 			texs.append(t)
 		mat_tex.append(tex_of[key])
@@ -394,29 +387,61 @@ func build_split(model_name: String, surfaces: Array, max_tex := 256) -> Array:
 		if t.lossy:
 			stats.lossy.append(t.name)
 	stats.textures = texs.size()
+	stats.tex4 = texs.filter(func(t): return t.fmt == 5).size()
+	return texs
+
+
+## Plain texel bytes / 4x4 texel bytes of a texture (4x4 indices = half the 4x4 texels).
+static func _plain(t: Dictionary) -> int:
+	return 0 if t.fmt == 5 else t.data.size()
+
+
+static func _four(t: Dictionary) -> int:
+	return t.data.size() if t.fmt == 5 else 0
+
+
+## Like build(), split into several BMD0 files (at most MAX_FILES) so that each file's plain texels fit FILE_BUDGET
+## and its 4x4 texels FILE4_BUDGET (one VRAM allocation each per file, see TEX_BUDGET). Textures are packed
+## first-fit by decreasing size; untextured surfaces go with the first file. Returns [] + error on failure.
+## tex4x4: textures with more than 16 colours are 4x4-compressed (Tex4x4) instead of 8bpp.
+func build_split(model_name: String, surfaces: Array, max_tex := 256, tex4x4 := false) -> Array:
+	error = ""
+	stats = {"vertices": 0, "triangles": 0, "uv_clamped": 0, "textures": 0, "tex_bytes": 0, "tex4_bytes": 0,
+		"pal_bytes": 0, "lossy": [], "size": 0}
+	var surfs := surfaces.filter(func(s): return not s.indices.is_empty())
+	if surfs.is_empty():
+		error = "nothing to draw"
+		return []
+	var mat_tex := []
+	var texs := _collect_textures(surfs, max_tex, tex4x4, mat_tex)
 
 	# bins of textures
 	var order := range(texs.size())
-	order.sort_custom(func(a, b): return texs[a].data.size() > texs[b].data.size())
+	order.sort_custom(func(a, b): return _plain(texs[a]) + 2 * _four(texs[a]) > _plain(texs[b]) + 2 * _four(texs[b]))
 	var bins := [[]]
 	var used := [0]
+	var used4 := [0]
 	for ti in order:
-		var sz: int = texs[ti].data.size()
+		var sz: int = _plain(texs[ti])
+		var sz4: int = _four(texs[ti])
 		var placed := false
 		for b in bins.size():
-			if used[b] + sz <= FILE_BUDGET:
+			if used[b] + sz <= FILE_BUDGET and used4[b] + sz4 <= FILE4_BUDGET:
 				bins[b].append(ti)
 				used[b] += sz
+				used4[b] += sz4
 				placed = true
 				break
 		if not placed:
 			bins.append([ti])
 			used.append(sz)
+			used4.append(sz4)
 	if bins.size() > MAX_FILES:
 		error = "textures need %d model files, %d at most" % [bins.size(), MAX_FILES]
 		return []
 	var out := []
 	var tex_total := 0
+	var tex4_total := 0
 	var pal_total := 0
 	for b in bins.size():
 		var remap := {}
@@ -437,9 +462,11 @@ func build_split(model_name: String, surfaces: Array, max_tex := 256) -> Array:
 		if f.is_empty():
 			return []
 		tex_total += stats.tex_bytes
+		tex4_total += stats.tex4_bytes
 		pal_total += stats.pal_bytes
 		out.append(f)
 	stats.tex_bytes = tex_total
+	stats.tex4_bytes = tex4_total
 	stats.pal_bytes = pal_total
 	stats.files = out.size()
 	return out
@@ -703,47 +730,84 @@ static func _image_key(img: Image) -> String:
 	return "%dx%d:%d:%d" % [img.get_width(), img.get_height(), img.get_format(), hash(img.get_data())]
 
 
-## Shrink textures until the scene fits the VRAM budgets: the largest texture is re-encoded at half its size
-## (texels), the largest palettes drop to 16 colours (palettes). Sets stats.downscaled / stats.recoloured.
+## Shrink textures until the scene fits the VRAM budgets (plain TEX_BUDGET, 4x4 TEX4_BUDGET, both VRAM_BUDGET, one
+## file FILE_BUDGET / FILE4_BUDGET, palettes PAL_BUDGET):
+##  - 4x4 over budget: the largest 4x4 texture goes 8bpp when the plain budgets have room, else is halved;
+##  - otherwise the largest texture of the over-budget kind is re-encoded at half its size;
+##  - palettes: the largest 4x4 palette halves its pairs (>= 16), else the largest 8bpp palette drops to 16 colours.
+## Sets stats.downscaled / stats.recoloured / stats.unpacked (4x4 -> 8bpp).
 func _fit_budget(texs: Array) -> void:
 	stats.downscaled = []
 	stats.recoloured = []
+	stats.unpacked = []
 	for t in texs:   # one texture must fit one file
-		while t.data.size() > FILE_BUDGET and t.max > 8:
-			t.max = maxi(8, maxi(t.w, t.h) / 2)
-			_reencode(t)
-			if not t.name in stats.downscaled:
-				stats.downscaled.append(t.name)
+		while (_plain(t) > FILE_BUDGET or _four(t) > FILE4_BUDGET) and t.max > 8:
+			_halve(t)
 	while true:
-		var total := 0
+		var P := 0
+		var F := 0
+		for t in texs:
+			P += _plain(t)
+			F += _four(t)
+		var kind := ""
+		if F > TEX4_BUDGET:
+			kind = "4x4"
+		elif P > TEX_BUDGET:
+			kind = "plain"
+		elif P + F * 3 / 2 > VRAM_BUDGET:
+			kind = "any"
+		if kind == "":
+			break
 		var big := -1
+		var bs := 0
 		for i in texs.size():
-			total += texs[i].data.size()
-			if texs[i].max > 8 and (big < 0 or texs[i].data.size() > texs[big].data.size()):
+			var t: Dictionary = texs[i]
+			var s: int = _four(t) if kind == "4x4" else (_plain(t) if kind == "plain" else _plain(t) + _four(t) * 3 / 2)
+			if t.max > 8 and s > bs:
+				bs = s
 				big = i
-		if total <= TEX_BUDGET or big < 0:
+		if big < 0:
 			break
 		var t: Dictionary = texs[big]
-		t.max = maxi(8, maxi(t.w, t.h) / 2)
-		_reencode(t)
-		if not t.name in stats.downscaled:
-			stats.downscaled.append(t.name)
+		if kind == "4x4":
+			var p8: int = t.w * t.h
+			if P + p8 <= TEX_BUDGET and P + p8 + (F - _four(t)) * 3 / 2 <= VRAM_BUDGET and p8 <= FILE_BUDGET:
+				t.pairs = 0
+				_reencode(t)
+				stats.unpacked.append(t.name)
+				continue
+		_halve(t)
 	while true:
 		var total := 0
 		var big := -1
 		for i in texs.size():
-			total += texs[i].palette.size()
-			if texs[i].ncol > 16 and (big < 0 or texs[i].palette.size() > texs[big].palette.size()):
+			var t: Dictionary = texs[i]
+			total += t.palette.size()
+			var can: bool = (t.fmt == 5 and t.colors > 16) or (t.fmt != 5 and t.ncol > 16)
+			if can and (big < 0 or t.palette.size() > texs[big].palette.size()):
 				big = i
 		if total <= PAL_BUDGET or big < 0:
 			break
-		texs[big].ncol = 16
-		_reencode(texs[big])
-		stats.recoloured.append(texs[big].name)
+		var t: Dictionary = texs[big]
+		if t.fmt == 5:
+			t.pairs = maxi(16, t.colors / 2)
+		else:
+			t.ncol = 16
+		_reencode(t)
+		if not t.name in stats.recoloured:
+			stats.recoloured.append(t.name)
+
+
+func _halve(t: Dictionary) -> void:
+	t.max = maxi(8, maxi(t.w, t.h) / 2)
+	_reencode(t)
+	if not t.name in stats.downscaled:
+		stats.downscaled.append(t.name)
 
 
 static func _reencode(t: Dictionary) -> void:
-	var e := encode_texture(t.src, t.max, t.ncol)
+	var e := encode_texture(t.src, t.max, t.ncol, t.get("pairs", 0))
+	t.erase("idx")
 	for k in e:
 		t[k] = e[k]
 
@@ -756,25 +820,36 @@ static func _set_dict_entry(b: PackedByteArray, i: int, entry_size: int, e: Pack
 		b[o + j] = e[j] if j < e.size() else 0
 
 
+## TEX0 block. Layout like the originals: header, texture dict, palette dict, plain texels, 4x4 texels, 4x4 indices,
+## palettes. A 4x4 texture's param offset counts from the 4x4 texel block; its indices sit at index block + offset / 2.
 func _tex0(texs: Array) -> PackedByteArray:
 	if texs.is_empty():
 		return PackedByteArray()
 	var tnames := texs.map(func(x): return x.name)
 	var pnames := texs.map(func(x): return x.name + "_pl")
 	var tdata := PackedByteArray()
+	var t4data := PackedByteArray()
+	var i4data := PackedByteArray()
 	var pdata := PackedByteArray()
 	var tentries := []
 	var pentries := []
 	for t in texs:
-		var param: int = (tdata.size() >> 3) | ((int(log(t.w) / log(2)) - 3) << 20) | ((int(log(t.h) / log(2)) - 3) << 23) \
+		var at: int
+		if t.fmt == 5:
+			at = t4data.size()
+			t4data.append_array(t.data)
+			i4data.append_array(t.idx)
+		else:
+			at = tdata.size()
+			tdata.append_array(t.data)
+			_align(tdata, 8)
+		var param: int = (at >> 3) | ((int(log(t.w) / log(2)) - 3) << 20) | ((int(log(t.h) / log(2)) - 3) << 23) \
 			| (t.fmt << 26) | ((1 << 29) if t.color0 else 0)
 		var e := PackedByteArray()
 		e.resize(8)
 		e.encode_u32(0, param)
 		e.encode_u32(4, t.w | (t.h << 11) | 0x80000000)
 		tentries.append(e)
-		tdata.append_array(t.data)
-		_align(tdata, 8)
 		var pe := PackedByteArray()
 		pe.resize(4)
 		pe.encode_u16(0, pdata.size() >> 3)
@@ -782,6 +857,7 @@ func _tex0(texs: Array) -> PackedByteArray:
 		pdata.append_array(t.palette)
 		_align(pdata, 16)
 	stats.tex_bytes = tdata.size()
+	stats.tex4_bytes = t4data.size()
 	stats.pal_bytes = pdata.size()
 	var td := dict(tnames, 8, tentries)
 	var pd := dict(pnames, 4, pentries)
@@ -798,17 +874,23 @@ func _tex0(texs: Array) -> PackedByteArray:
 	_align(b, 8)
 	var o_tex := b.size()
 	b.append_array(tdata)
-	var o_end := b.size()
+	var o_t4 := b.size()
+	b.append_array(t4data)
+	var o_i4 := b.size()
+	b.append_array(i4data)
+	_align(b, 8)
+	var o_pal := b.size()
 	b.append_array(pdata)
 	b.encode_u16(0x0C, tdata.size() >> 3)
 	b.encode_u16(0x0E, o_td)
 	b.encode_u32(0x14, o_tex)
+	b.encode_u16(0x1C, t4data.size() >> 3)
 	b.encode_u16(0x1E, o_td)
-	b.encode_u32(0x24, o_end)
-	b.encode_u32(0x28, o_end)
+	b.encode_u32(0x24, o_t4)
+	b.encode_u32(0x28, o_i4)
 	b.encode_u16(0x30, pdata.size() >> 3)
 	b.encode_u32(0x34, o_pd)
-	b.encode_u32(0x38, o_end)
+	b.encode_u32(0x38, o_pal)
 	_align(b)
 	b.encode_u32(4, b.size())
 	return b
