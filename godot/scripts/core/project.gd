@@ -13,7 +13,7 @@ extends RefCounted
 ## from another block might mean this item (ambiguous).
 ## Every mutating function returns "" on success or the reason it was refused (nothing changed then).
 
-const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg"]
+const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg", "newloc"]
 const UNDO_MAX := 100
 
 var gd: GameData
@@ -57,6 +57,7 @@ func _load_saved() -> void:
 		if is_edited("text", GameData.BANKS[l]):
 			gd.set_bank_bytes(l, edits[key("text", GameData.BANKS[l])])
 	_sync_tables()
+	_sync_newlocs()
 
 
 func original(kind: String, entry: int) -> PackedByteArray:
@@ -64,8 +65,21 @@ func original(kind: String, entry: int) -> PackedByteArray:
 		"furniture": return furn.defaults_bytes(entry)
 		"conv": return encode_convs(gd.rom_conversations())
 		"msg": return encode_msgs(gd.rom_messages())
-		"layout", "text": return gd.rombin.raw_entry(entry)
-		_: return gd.rombin.data(entry)
+		"newloc": return "[]".to_utf8_buffer()
+		"layout", "text":
+			if entry >= VIRT:
+				return gd.rombin.raw_entry(gd.locations[_virt_src(entry)].nav)
+			return gd.rombin.raw_entry(entry)
+		_:
+			if entry >= VIRT:
+				return gd.rombin.data(gd.locations[_virt_src(entry)].bsp)
+			return gd.rombin.data(entry)
+
+
+## Template location of a new location's virtual entry.
+func _virt_src(entry: int) -> int:
+	var L := newloc((entry - VIRT) / 2)
+	return L.src if not L.is_empty() else 5
 
 
 func current(kind: String, entry: int) -> PackedByteArray:
@@ -101,6 +115,8 @@ func _write(k: String, data) -> void:
 				gd.set_bank_bytes(l, edits.get(k, PackedByteArray()))
 	if k.begins_with("conv:") or k.begins_with("msg:"):
 		_sync_tables()
+	if k.begins_with("newloc:") or k.begins_with("text:"):
+		_sync_newlocs()
 
 
 func _store(kind: String, entry: int, data: PackedByteArray) -> void:
@@ -137,21 +153,232 @@ func discard_all() -> void:
 # --- locations ---------------------------------------------------------------------------------------------------
 
 func loc_record(loc: int) -> Dictionary:
-	return gd.locations[loc]
+	return gd.loc(loc)
 
 
 func nav_of(loc: int) -> int:
-	var n: int = gd.locations[loc].nav
+	var n: int = gd.loc(loc).nav
 	return -1 if n == GameData.NONE else n
 
 
 func shared_with(loc: int) -> Array:
 	var nav := nav_of(loc)
-	var b: int = gd.locations[loc].bsp
+	var b: int = gd.loc(loc).bsp
 	var out := []
 	for L in gd.locations:
 		if L.location != loc and ((nav >= 0 and L.nav == nav) or L.bsp == b):
 			out.append(L.location)
+	return out
+
+
+# --- new locations (ids 34..63, LocExt) ----------------------------------------------------------------------------
+## Stored as the edit "newloc:0" (JSON list of {id, src, alias, name_text, price, score, parent, offered}).
+## A new location starts as a copy of an original one (`src`, the template): same scene models, music, layout variant
+## rows; its own layout and collision, kept here under the virtual rom.bin entries VIRT + 2 * id (layout) and
+## VIRT + 2 * id + 1 (collision) and appended to rom.bin at export. `alias` = original location whose hard-coded
+## behaviour it takes (indoor / outdoor fog and ambient sounds, render depth, light keys). price 0 = always open,
+## price > 0 = sold in the construction menu (ids <= LocExt.SALE_MAX), bought at once.
+
+const VIRT := 0x100000
+const NEWLOC_KEYS := ["id", "src", "alias", "name_text", "price", "score", "parent", "offered"]
+
+
+func newlocs() -> Array:
+	var v = JSON.parse_string(current("newloc", 0).get_string_from_utf8())
+	var out := []
+	if v is Array:
+		for d in v:
+			var L := {}
+			for k in NEWLOC_KEYS:
+				L[k] = bool(d.get(k, false)) if k == "offered" else int(d.get(k, 0))
+			out.append(L)
+	out.sort_custom(func(a, b): return a.id < b.id)
+	return out
+
+
+func newloc(id: int) -> Dictionary:
+	for L in newlocs():
+		if L.id == id:
+			return L
+	return {}
+
+
+func is_new_location(id: int) -> bool:
+	return id >= LocExt.FIRST and not newloc(id).is_empty()
+
+
+func _store_newlocs(arr: Array) -> void:
+	_store("newloc", 0, JSON.stringify(arr).to_utf8_buffer())
+
+
+## Location dicts of the new locations for GameData (same keys as the original ones, plus new / src).
+func new_location_dicts() -> Array:
+	var out := []
+	for L in newlocs():
+		var s: Dictionary = gd.locations[L.src]
+		var name := gd.text(L.name_text)
+		out.append({"location": L.id, "place": name if name != "" else "new location %d" % L.id, "record": 0,
+			"bsp": VIRT + 2 * L.id + 1, "gmd1": s.gmd1, "nav": VIRT + 2 * L.id if s.nav != GameData.NONE else GameData.NONE,
+			"special_model": s.special_model, "field12": s.field12, "models": s.models, "new": true, "src": L.src})
+	return out
+
+
+func _sync_newlocs() -> void:
+	gd.set_new_locations(new_location_dicts())
+
+
+## Price entry of an original location: [price, score, parent] ([0, 0, 0] when not sold).
+func price_entry(loc: int) -> Array:
+	var w := gd.u32(LocExt.PRICE_TABLE + 4 * loc)
+	return [w & 0xFFFF, (w >> 16) & 0xFF, w >> 24]
+
+
+## Create a new location from the original `src`, named `name` (a new string in every language). Its id goes to
+## last_index. "" or an error.
+func add_new_location(src: int, name: String) -> String:
+	if src < 0 or src >= GameData.LOC_COUNT:
+		return "template must be an original location (0..32)"
+	if gd.locations[src].nav == GameData.NONE:
+		return "location %d has no layout: choose another template" % src
+	var arr := newlocs()
+	var used := arr.map(func(L): return L.id)
+	var id := -1
+	for k in range(LocExt.FIRST, LocExt.MAX_ID + 1):
+		if not k in used:
+			id = k
+			break
+	if id < 0:
+		return "no free location id left (%d..%d)" % [LocExt.FIRST, LocExt.MAX_ID]
+	if name.strip_edges() == "":
+		return "give the new location a name"
+	var e := add_string(name.strip_edges())
+	if e != "":
+		return e
+	var pe := price_entry(src)
+	arr.append({"id": id, "src": src, "alias": src, "name_text": last_index, "price": 0, "score": 0,
+		"parent": pe[2] if pe[0] > 0 else 5, "offered": false})
+	_group = true
+	_store_newlocs(arr)
+	_group = false
+	last_index = id
+	return ""
+
+
+## Change fields of a new location: alias, price, score, parent, offered. "" or an error.
+func set_new_location(id: int, fields: Dictionary) -> String:
+	var arr := newlocs()
+	for L in arr:
+		if L.id != id:
+			continue
+		var n: Dictionary = L.duplicate()
+		for k in fields:
+			if not k in ["alias", "price", "score", "parent", "offered"]:
+				return "unknown field " + k
+			n[k] = bool(fields[k]) if k == "offered" else int(fields[k])
+		if n.alias < 0 or n.alias >= GameData.LOC_COUNT:
+			return "'behaves like' must be an original location (0..32)"
+		if n.price < 0 or n.price > 0xFFFF or n.score < 0 or n.score > 255:
+			return "price must be 0..65535 and score 0..255"
+		if n.price > 0 and id > LocExt.SALE_MAX:
+			return "only locations %d..%d can be sold (the game saves the owned bits 0..39)" % [LocExt.FIRST, LocExt.SALE_MAX]
+		if not gd.has_location(n.parent) or n.parent == id:
+			return "parent (shown in the construction menu) must be another existing location"
+		arr[arr.find(L)] = n
+		_store_newlocs(arr)
+		return ""
+	return "location %d is not a new location" % id
+
+
+## Where a location is used as a destination: door items and script ops with a location argument.
+func loc_users(id: int) -> Array:
+	var out := []
+	var seen := {}
+	for L in gd.locations:
+		var nav: int = L.nav
+		if nav == GameData.NONE or seen.has(nav):
+			continue
+		seen[nav] = true
+		var lay := Layout.parse(current("layout", nav), gd.arg_size)
+		if lay.error != "":
+			continue
+		for b in lay.blocks.size():
+			var blk: Layout.Block = lay.blocks[b]
+			for g in blk.groups.size():
+				for i in blk.groups[g].items.size():
+					var it: Layout.Item = blk.groups[g].items[i]
+					if it.type == 4 and it.get_field("dest") == id:
+						out.append("door in location %d (block %d group %d item %d)" % [L.location, b, g, i + 1])
+			for si in blk.scripts.size():
+				var s: Array = blk.scripts[si]
+				for k in s.size():
+					if LayScript.decode_args(s[k][0], s[k][1]).get("location") == id:
+						out.append("location %d block %d script %d op %d" % [L.location, b, si + 1, k + 1])
+	return out
+
+
+## Remove a new location with its layout and collision edits (refused while a door or script leads there).
+func delete_new_location(id: int) -> String:
+	var arr := newlocs()
+	var L := newloc(id)
+	if L.is_empty():
+		return "location %d is not a new location" % id
+	var users := loc_users(id)
+	users = users.filter(func(u): return not u.begins_with("door in location %d " % id) and not u.begins_with("location %d " % id))
+	if not users.is_empty():
+		return "location %d is still used: %s" % [id, "; ".join(users.slice(0, 5))]
+	arr = arr.filter(func(x): return x.id != id)
+	_store_newlocs(arr)
+	_group = true
+	for k in [key("layout", VIRT + 2 * id), key("bsp", VIRT + 2 * id + 1)]:
+		if edits.has(k):
+			undo_stack[-1].append([k, edits.get(k)])
+			_write(k, null)
+	_group = false
+	return ""
+
+
+## rom.bin indices of the new locations' entries: {virtual entry: index} (appended after the last entry, by id).
+func _appended_map() -> Dictionary:
+	var out := {}
+	var n := gd.rombin.count()
+	for L in newlocs():
+		if gd.locations[L.src].nav != GameData.NONE:
+			out[VIRT + 2 * L.id] = n
+			n += 1
+		out[VIRT + 2 * L.id + 1] = n
+		n += 1
+	return out
+
+
+## The appended rom.bin entries, in index order.
+func _appended_entries() -> Array:
+	var out := []
+	for L in newlocs():
+		var s: Dictionary = gd.locations[L.src]
+		if s.nav != GameData.NONE:
+			var k := key("layout", VIRT + 2 * L.id)
+			var d: PackedByteArray = edits[k].duplicate() if edits.has(k) else gd.rombin.raw_entry(s.nav)
+			while d.size() % 4:
+				d.append(0)
+			out.append(d)
+		var kb := key("bsp", VIRT + 2 * L.id + 1)
+		out.append(S2Cmp.stored_blob(edits[kb]) if edits.has(kb) else gd.rombin.raw_entry(s.bsp))
+	return out
+
+
+## The new locations for LocExt.install (records point at the appended entries).
+func _install_list() -> Array:
+	var amap := _appended_map()
+	var out := []
+	for L in newlocs():
+		var s: Dictionary = gd.locations[L.src]
+		var rec := gd.a9.slice(s.record - GameData.BASE, s.record - GameData.BASE + 0x14 + 8 * s.models.size())
+		rec.encode_u16(0, amap[VIRT + 2 * L.id + 1])
+		if s.nav != GameData.NONE:
+			rec.encode_u16(4, amap[VIRT + 2 * L.id])
+		var d: Dictionary = L.duplicate()
+		d["record"] = rec
+		out.append(d)
 	return out
 
 
@@ -214,8 +441,8 @@ func check_item(loc: int, lay: Layout, b: int, g: int, i: int) -> String:
 		4:
 			var dest := it.get_field("dest")
 			var entry := it.get_field("entry")
-			if dest >= GameData.LOC_COUNT:
-				return "door destination %d: no such location (0..%d)" % [dest, GameData.LOC_COUNT - 1]
+			if not gd.has_location(dest):
+				return "door destination %d: no such location" % dest
 			var ids := lay.entry_ids() if dest == loc else entry_ids(dest)
 			if not entry in ids:
 				return "door: location %d has no entry point %d (it has %s)" % [dest, entry, ids if not ids.is_empty() else "none"]
@@ -447,8 +674,8 @@ func script_ref_errors(lay: Layout) -> Array:
 					out.append("%s: conversation %d does not exist" % [where, a.conv])
 				if a.has("msg") and a.msg >= gd.n_msg():
 					out.append("%s: message %d does not exist (0..%d)" % [where, a.msg, gd.n_msg() - 1])
-				if a.has("location") and a.location >= GameData.LOC_COUNT:
-					out.append("%s: location %d does not exist (0..%d)" % [where, a.location, GameData.LOC_COUNT - 1])
+				if a.has("location") and not gd.has_location(a.location):
+					out.append("%s: location %d does not exist" % [where, a.location])
 		for g in blk.groups.size():
 			for i in blk.groups[g].items.size():
 				var it: Layout.Item = blk.groups[g].items[i]
@@ -513,7 +740,7 @@ func edit_entry(loc: int, k: int, x = null, y = null, z = null, angle_rad = null
 # --- BSP ----------------------------------------------------------------------------------------------------------
 
 func load_bsp(loc: int) -> Bsp:
-	return Bsp.parse(current("bsp", gd.locations[loc].bsp))
+	return Bsp.parse(current("bsp", gd.loc(loc).bsp))
 
 
 func _save_bsp(entry: int, t: Bsp) -> String:
@@ -536,7 +763,7 @@ func bsp_delete(loc: int, p: Vector3) -> String:
 	var e := t.delete_cell(c[0])
 	if e != "":
 		return e
-	return _save_bsp(gd.locations[loc].bsp, t)
+	return _save_bsp(gd.loc(loc).bsp, t)
 
 
 func bsp_move(loc: int, p: Vector3, delta: Vector3) -> String:
@@ -546,7 +773,7 @@ func bsp_move(loc: int, p: Vector3, delta: Vector3) -> String:
 		return "no solid cell at that point"
 	if t.move_cell(c[0], c[1], delta) < 0:
 		return "the cell could not be moved"
-	return _save_bsp(gd.locations[loc].bsp, t)
+	return _save_bsp(gd.loc(loc).bsp, t)
 
 
 func bsp_box(loc: int, lo: Vector3, hi: Vector3) -> String:
@@ -556,7 +783,7 @@ func bsp_box(loc: int, lo: Vector3, hi: Vector3) -> String:
 	var n := t.add_box(lo, hi)
 	if n <= 0:
 		return "the box lies entirely inside existing solid cells"
-	return _save_bsp(gd.locations[loc].bsp, t)
+	return _save_bsp(gd.loc(loc).bsp, t)
 
 
 # --- text --------------------------------------------------------------------------------------------------------
@@ -1042,6 +1269,8 @@ func arm9_mod() -> Arm9Mod:
 		m.error = _apply_convs(m)
 	if m.error == "" and is_edited("msg", 0):
 		m.error = _apply_msgs(m)
+	if m.error == "" and not newlocs().is_empty():
+		m.error = LocExt.install(m, ovl_patches, _install_list())
 	return m
 
 
@@ -1075,7 +1304,7 @@ static func arm_bl_target(at: int, w: int) -> int:
 ## Make the game skip the intro movie, the menus and Create-a-Sim, and start a new game in `location` at entry point
 ## `entry` (the id byte +0xC), right after the first logo screen. "" or an error.
 static func boot_patch(m: Arm9Mod, location: int, entry: int) -> String:
-	if location < 0 or location > 32 or entry < 0 or entry > 255:
+	if location < 0 or location > LocExt.MAX_ID or location == GameData.LOC_COUNT or entry < 0 or entry > 255:
 		return "direct boot: location %d / entry %d out of range" % [location, entry]
 	var w := m.read_u32(BOOT_HOOK)
 	# a test ROM opened as the source already branches into its extension: accepted, re-hooked
@@ -1138,7 +1367,7 @@ func has_arm9_edits() -> bool:
 	for k in edits:
 		if k.begins_with("furniture:") or k.begins_with("conv:") or k.begins_with("msg:"):
 			return true
-	return false
+	return not newlocs().is_empty()
 
 
 # --- export -------------------------------------------------------------------------------------------------------
@@ -1156,6 +1385,8 @@ func build_rom(boot := []) -> PackedByteArray:
 		var parts: PackedStringArray = k.split(":")
 		var e := parts[1].to_int()
 		var d: PackedByteArray = edits[k]
+		if e >= VIRT:
+			continue   # new location entries: appended below
 		if parts[0] == "layout":
 			var p := d.duplicate()
 			while p.size() % 4:
@@ -1166,8 +1397,9 @@ func build_rom(boot := []) -> PackedByteArray:
 		elif parts[0] == "text":
 			reps[e] = d
 	var files := {}
-	if not reps.is_empty():
-		files[gd.rombin_file_id] = gd.rombin.build(reps)
+	var added := _appended_entries()
+	if not reps.is_empty() or not added.is_empty():
+		files[gd.rombin_file_id] = gd.rombin.build(reps, added)
 	var a9 := PackedByteArray()
 	var ovt := PackedByteArray()
 	if has_arm9_edits() or not boot.is_empty():

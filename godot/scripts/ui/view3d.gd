@@ -110,7 +110,7 @@ func load_location(refit: bool) -> void:
 	_build_bsp()
 	if refit:
 		fit()
-	for m in ed.gd.locations[ed.loc].models:
+	for m in ed.gd.loc(ed.loc).models:
 		queue.append([token, m.model, -1, root_scene, false])
 	for it in ed.items:
 		_add_item(it)

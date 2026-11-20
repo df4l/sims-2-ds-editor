@@ -110,9 +110,56 @@ operand in the ARM9 and the 19 overlays):
 
 (The literal 0x449C at 0x02065C1C is the end bound of the S+0x4418 init loop, not an access.)
 Each first word is replaced by a `b` to a trampoline in the extension, which branches back (no `bl`: lr untouched;
-two temps pushed, flags saved with mrs / msr). The trampoline keeps the original code for id < 33 and uses a 64-byte
-array in the extension (init 0x2A) for 33..63. Overlay 5 is stored decompressed (like overlay 15).
+two temps pushed, flags saved with mrs / msr). The trampoline keeps the original code for id < 34 (id 33, the
+"no location" sentinel, included since 2026-11-20) and uses a 64-byte array in the extension (init 0x2A) for 34..63. Overlay 5 is stored decompressed (like overlay 15).
 Emulator (build/newloc_proto/loc34_m.nds, without the old `mov r0,#0x2a` patch at 0x02084C68): id 34 loads and
 plays music track 5 (the City Hall record music, sound state 0x021424F8+10), S+0x449C+33.. unchanged; control id 6
 with the hooks: same. The write paths and Map_PlayLocationMusic were not triggered in the emulator (same trampoline
 shape, checked by disassembly). The extension array is not saved: a stereo music picked in a new location resets.
+
+## 7. New location ids 34..63 (LocExt.install) — CONFIRMED (code + emulator, 2026-11-20)
+
+`LocExt.install` (godot/scripts/core/loc_ext.gd), called at export when the project has new locations
+(EditProject "newloc:0", Locations tab). Every hook replaces one word with a `b` to a trampoline in the extension that
+redoes the original instruction(s) for **id < 34** and takes the new path for ids 34..63, then branches back. Id 33
+(the "no location" sentinel) keeps the original path; the moved tables keep the original word 33 (what the game read
+past the end of the 33-entry tables). Every trampoline was disassembled with capstone from the exported extension
+(build/newloc_test/arm9_ext.bin + hooks.txt) and checked against the original code around the site (registers live
+after the site, flags, branch targets into replaced words).
+
+| what | where | new path (ids >= 34) |
+|------|-------|----------------------|
+| location table (33 pointers, 7 references) | moved: 64 entries in the extension | own record (template copy, own nav / bsp entries appended to rom.bin) |
+| layout variant rows (Map_LoadLocation) | literal 0x02084CEC + row count `cmp r2,#0xc` 0x02084C20 | template's rows copied with the new id |
+| price entry {u16 price, u8 score, u8 parent} | literal 0x02073F78 (Coll_PriceEntry) | 64-entry table; Coll_GetScore keeps the old one |
+| dust table | literals 0x0205F108 / F26C / F344 / F380 | 64 entries (0 = no dust) |
+| Map_UpdateLocationAmbience id | 0x0207625C `ldr r4,[r1,#0xf4]` | id -> alias ("behaves like": indoor fog list, ambient sounds) |
+| State2_LocationEnter id lists | 0x02076F4C (r4 = real id) ... 0x02077104 (r5 restored) | lists see the alias |
+| Map_SetLocationLightKeys | 0x02085E04 `cmp r1,#0x21` (ids > 33) | alias |
+| Hotel_DustOnLocationEnter | 0x0205EFA4..EFB0 (4 words) | count 0 |
+| LocStateSpawnProps record S+0x88+id*0xFC | 0x02083890 `mla` | 0xFC records in the extension |
+| prop pick-up (same records, +0x95) | 0x0208D698 `mla` | same records |
+| construction timer S+0x4418[id] (u32[33]) | Door_TryEnter 0x02064430; **door warp FUN_0209b838 0x0209B88C**; ov01 menu 0x02149C68 | a single word 0x80000000 ("none") |
+| Coll_IsOwned | 0x0207355C | price 0 -> 1 (always open); else the owned bitset (bits 0..63 in RAM) |
+| Coll_IsOffered | 0x020735A8 | per-id flag -> 1; else the bitset |
+| ov01 purchase | 0x02149F68 `cmp r1,#4` | Coll_SetOwned(Coll, id, 1), like id 4; no timer, no construction record |
+| ov01 menu loop | 0x02149CA0 `cmp r5,#0x21` -> `#0x28` (only when a location is sold) | ids up to 39 listed |
+| name text 0x43 + id | 15 `add rD,rS,#0x43` sites (ARM9 4, ov01 10, ov08 1) | u16 text id per location |
+
+S+0x4418 accesses, complete (scan of every literal 0x4400..0x449C and every `#0x4xx]` operand, ARM9 + 19
+overlays): 0x02064438 (Door_TryEnter), 0x0209B898 / B8A4 (door warp: > now -> "room being built" 22 / 23),
+0x02065C14 (init loop, 33 entries), ov01 0x02149C74 (menu), ov01 0x0214A07C (purchase write, bypassed for ids >= 34).
+The Coll +0x220 loops (0x02073254, 0x020732FC, 0x02073EF4) are bounded to 0..32. The 0x0209B88C hook was missing at
+first: a door to id 34 read S+0x44A0 (inside the music array, bytes 0x2A) as a timer and warped to RoomBeingBuilt2.
+
+Limits: only ids 34..39 can be sold (the save keeps the owned / offered bits 0..39); the ov01 list has 33 slots
+(obj+0x4C) and at most 14 original + 6 new locations are for sale. Not saved for ids >= 34: the stereo music choice,
+the picked-up random props (extension arrays).
+
+**Emulator (build/newloc_test/, cold boots)**: newloc_34.nds boots into 34 (world+0xF4 = 34, City Hall copy, its
+welcome text); newloc_35.nds into 35 (Saloon copy); newloc_6.nds (control, same hooks) into City Hall. Saved in 35:
+the save slot shows "Test Saloon" (ov08 hook), the load screen too (0x0206EA28 / ED98), loading puts the Sim back in
+35, its door leads to 5. door_5_34.nds: both Saloon door items of location 5 ([0,0,0] model, [0,0,18] trigger box)
+-> 34: walking in loads 34. Construction menu (story flag 0x13 set in RAM): "Test Saloon (Town Square) §500" listed,
+bought: money 2000 -> 1500, owned bit 35 set (Coll+0x21C = 8), gone from the list.
+

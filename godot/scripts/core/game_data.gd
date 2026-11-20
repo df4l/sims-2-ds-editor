@@ -61,7 +61,8 @@ var a9 := PackedByteArray()
 var rombin_file_id := -1
 var error := ""
 var warning := ""
-var locations := []      # dicts
+var locations := []      # dicts: the 33 original locations, then the new ones (EditProject)
+var by_id := {}          # location id -> dict
 var arg_size := PackedByteArray()
 var _banks := {}
 var _names := {}
@@ -96,7 +97,9 @@ func _init_from_rom() -> bool:
 	if not _check_tables():
 		return false
 	_read_locations()
-	arg_size = a9.slice(ARG_SIZE_TABLE - BASE, ARG_SIZE_TABLE - BASE + 0x52)
+	if u32(LocExt.PRICE_LITERAL) != LocExt.PRICE_TABLE:
+		warning = "This ROM was exported with new locations (ids 34+). They are not shown and cannot be edited from it: open the original ROM (its project keeps them)."
+	arg_size =a9.slice(ARG_SIZE_TABLE - BASE, ARG_SIZE_TABLE - BASE + 0x52)
 	return true
 
 
@@ -131,8 +134,32 @@ func s32(a: int) -> int:
 	return a9.decode_s32(a - BASE)
 
 
+## Location by id (original 0..32 or new 34..63, see EditProject new locations); {} when it does not exist.
+func loc(id: int) -> Dictionary:
+	return by_id.get(id, {})
+
+
+func has_location(id: int) -> bool:
+	return by_id.has(id)
+
+
+func place(id: int) -> String:
+	return by_id[id].place if by_id.has(id) else "?"
+
+
+## Show these new locations (dicts shaped like the original ones, see EditProject.new_location_dicts) after the
+## original 33.
+func set_new_locations(news: Array) -> void:
+	locations = locations.slice(0, LOC_COUNT)
+	locations.append_array(news)
+	by_id.clear()
+	for L in locations:
+		by_id[L.location] = L
+
+
 func _read_locations() -> void:
 	locations.clear()
+	by_id.clear()
 	for loc in LOC_COUNT:
 		var p := u32(LOC_TABLE + 4 * loc)
 		var f := []
@@ -144,6 +171,7 @@ func _read_locations() -> void:
 			models.append({"model": u16(p + 0x18 + 8 * j), "anim_list": lp, "anims": u16(p + 0x1A + 8 * j)})
 		locations.append({"location": loc, "place": PLACES[loc], "record": p, "bsp": f[0], "gmd1": f[1],
 			"nav": f[2], "special_model": f[8], "field12": f[9], "models": models})
+		by_id[loc] = locations[-1]
 
 
 func model_entry(table: int, i: int) -> int:

@@ -113,15 +113,22 @@ Code-driven approach:
 
 > Update this section at the end of every session.
 
-- Current phase: 5 (editor, milestone 3 in progress: "add item" palette done)
-- 2026-11-19 (latest): new location ids (34+, 33 stays "no location") — feasibility study, prototype
+- Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations)
+- 2026-11-20 (latest): new location ids 34..63 DONE. LocExt.install (godot/scripts/core/loc_ext.gd, docs/formats/arm9.md §7):
+  64-entry location table + own records, "behaves like" alias, name text table (15 sites), price / offered tables,
+  dust, 0xFC prop records, construction timer (3 sites incl. the door warp 0x0209B88C), ov01 purchase / menu.
+  Ids <= 33 keep the original code path. Trampolines checked with capstone; emulator CONFIRMED (build/newloc_test/):
+  boot into 34 / 35 / 6, save + load in 35 (names in save / load screens), door 5 -> 34, construction menu buy of 35.
+  Editor: Locations tab (create from a template, behaves like, price, menu parent, offered, name, delete).
+  Tests: godot/tests/test_newloc.gd, test_locations_ui.gd (+ all other suites pass). Prototype proto_newloc.gd removed.
+- 2026-11-19: new location ids (34+, 33 stays "no location") — feasibility study, prototype
   godot/tests/proto_newloc.gd, docs/journal.md. Id 34 = City Hall record loads and plays once the location table,
   music read (0x02084C68), State2 render defaults, layout variant table and the "indoor" id list of
   Map_UpdateLocationAmbience (fog, 0x020766CC) are patched: pixel-identical to City Hall. Overlays scanned
   (tools/ovscan.py): only ov05 (music picker, writes S+0x449C[loc]) needs work; ov01 construction menu stops at id 32.
   Music override S+0x449C: all 12 accesses hooked (LocExt.music_hook, docs/formats/arm9.md §6), ids 33..63 use a
   64-byte extension array; id 34 boots with record music CONFIRMED (build/newloc_proto/loc34_m.nds).
-  OPEN: other per-location game-state arrays (timers, dust, S+0x4418, 0xFC records…) have no room for ids 34+;
+  (Resolved 2026-11-20:) other per-location game-state arrays (timers, dust, S+0x4418, 0xFC records…) have no room for ids 34+;
   indoor list of Map_UpdateLocationAmbience still a test patch.
 - 2026-11-17 (latest): Test ▶ boots straight into the shown location (new game at the selected / first entry point):
   hook of the logo state 0x2B step change (0x0205440C) → ARM9 extension routine requesting state 2 mode 5 + state 0xC

@@ -174,7 +174,7 @@ static func describe(gd: GameData, op: int, args: PackedByteArray, lang := "en",
 	if name == "npc_mood":
 		s += "  ; " + (MOOD[a.mood] if a.mood < MOOD.size() else "?")
 	if a.has("location"):
-		var place: String = GameData.PLACES[a.location] if a.location < GameData.PLACES.size() else "?"
+		var place: String = gd.place(a.location) if gd != null else "?"
 		s += ("  ; -> " if name == "warp" else "  ; ") + place
 	return s
 

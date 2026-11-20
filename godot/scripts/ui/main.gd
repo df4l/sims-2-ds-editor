@@ -12,6 +12,8 @@ var proj: EditProject
 
 # location state
 var loc := -1
+var locs_box: VBoxContainer
+var _locs_sig := ""
 var lay: Layout
 var block := 0
 var lang := "en"
@@ -292,14 +294,22 @@ func open_rom(path: String) -> void:
 	start_screen.visible = false
 	editor.visible = true
 	get_window().title = "Sims 2 DS Map Editor — %s" % path.get_file()
-	loc_opt.clear()
-	for L in gd.locations:
-		loc_opt.add_item("%d · %s%s" % [L.location, L.place, "" if L.nav != GameData.NONE else "  (no layout)"], L.location)
+	_fill_loc_opt()
 	open_location(5)
 	if gd.warning != "":
 		show_msg(gd.warning, "Unexpected ROM version")
 	if not proj.edits.is_empty():
 		status("%s: %d edited file(s) restored from the previous session" % [path.get_file(), proj.edits.size()])
+
+
+## Location picker: the original locations, then the new ones (EditProject new locations).
+func _fill_loc_opt() -> void:
+	loc_opt.clear()
+	for L in gd.locations:
+		loc_opt.add_item("%d · %s%s%s" % [L.location, L.place, "  (new)" if L.get("new", false) else "",
+			"" if L.nav != GameData.NONE else "  (no layout)"], L.location)
+		if L.location == loc:
+			loc_opt.select(loc_opt.item_count - 1)
 
 
 func close_rom() -> void:
@@ -432,6 +442,7 @@ func _build_editor() -> void:
 	_build_scripts_tab()
 	_build_text_tab()
 	_build_dialogue_tab()
+	locs_box = _scroll_tab("Locations")
 
 	var bottom := MarginContainer.new()
 	bottom.add_theme_constant_override("margin_left", 8)
@@ -795,6 +806,89 @@ func _dlg_move(k: int, d: int) -> void:
 	_render_dialogue()
 
 
+# =================================================================================================================
+# Locations tab: new location ids (EditProject new locations, LocExt, docs/formats/arm9.md §7)
+# =================================================================================================================
+
+func _render_locations(force := false) -> void:
+	if gd == null or locs_box == null:
+		return
+	var sig := JSON.stringify(proj.newlocs()) + lang + str(proj.newlocs().map(func(L): return gd.place(L.id))) + str(loc)
+	if not force and sig == _locs_sig:
+		return
+	_locs_sig = sig
+	_fill_loc_opt()
+	if not gd.has_location(loc):
+		open_location.call_deferred(5)   # undo removed the shown location
+		return
+	W.clear(locs_box)
+	var originals := []
+	for L in gd.locations:
+		if not L.get("new", false):
+			originals.append([L.location, "%d · %s" % [L.location, L.place]])
+	locs_box.add_child(W.label("New location", null, false))
+	locs_box.add_child(W.label("A new location starts as a copy of an original one (its scene, music, layout and "
+		+ "collision); then edit its layout and collision like any other, and lead a door or a warp script to it. "
+		+ "Ids %d..%d (33 is the game's \"no location\")." % [LocExt.FIRST, LocExt.MAX_ID], W.MUTED))
+	var with_layout := originals.filter(func(o): return gd.loc(o[0]).nav != GameData.NONE)
+	var tpl := W.option(with_layout, loc if loc < GameData.LOC_COUNT else 6)
+	var name_in := LineEdit.new()
+	name_in.placeholder_text = "Name (shown in the save menu, construction menu…)"
+	name_in.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	locs_box.add_child(W.hbox([W.label("Copy of", null, false), tpl]))
+	locs_box.add_child(W.hbox([name_in, W.button("Create", func():
+		if apply(proj.add_new_location(W.option_value(tpl), name_in.text)):
+			var id := proj.last_index
+			_fill_loc_opt()
+			open_location(id)
+			status("New location %d created" % id), "Create the new location and open it")]))
+	var news := proj.newlocs()
+	if news.is_empty():
+		return
+	locs_box.add_child(HSeparator.new())
+	var all := []
+	for L in gd.locations:
+		all.append([L.location, "%d · %s" % [L.location, L.place]])
+	for L in news:
+		var id: int = L.id
+		var box := VBoxContainer.new()
+		box.add_child(W.label("%d · %s   (copy of %d · %s)" % [id, gd.place(id), L.src, gd.place(L.src)], W.WARN if id == loc else null, false))
+		var alias := W.option(originals, L.alias)
+		alias.tooltip_text = "Hard-coded behaviour taken from this original location: indoor / outdoor fog, ambient sounds, render depth, lights"
+		box.add_child(W.hbox([W.label("Behaves like", null, false), alias]))
+		var price := W.spin(0, 65535, L.price)
+		price.tooltip_text = "0 = always open. > 0 = sold by the City Hall clerk (Build Rooms), owned at once when bought (ids %d..%d only)" % [LocExt.FIRST, LocExt.SALE_MAX]
+		price.editable = id <= LocExt.SALE_MAX
+		var score := W.spin(0, 255, L.score)
+		score.tooltip_text = "Score byte of the price entry"
+		box.add_child(W.hbox([W.label("Price", null, false), price, W.label("score", null, false), score]))
+		var parent := W.option(all.filter(func(o): return o[0] != id), L.parent)
+		parent.tooltip_text = "Shown under the name in the construction menu"
+		var offered := W.toggle("Offered from the start", L.offered, func(_on): pass,
+			"In the construction menu as soon as building is unlocked (story flag 0x13)")
+		box.add_child(W.hbox([W.label("Menu parent", null, false), parent]))
+		box.add_child(offered)
+		box.add_child(W.hbox([
+			W.button("Apply", func():
+				if apply(proj.set_new_location(id, {"alias": W.option_value(alias), "price": int(price.value),
+						"score": int(score.value), "parent": W.option_value(parent), "offered": offered.button_pressed})):
+					status("Location %d updated" % id)),
+			W.button("Open", func(): open_location(id)),
+			W.button("Name…", func(): _dlg_open_text(L.name_text), "Edit its name in the Text tab (one string per language)"),
+			W.button("Delete", func(): ask("Delete location %d (%s) with its layout and collision edits?" % [id, gd.place(id)], func():
+				if apply(proj.delete_new_location(id)):
+					_fill_loc_opt()
+					if loc == id:
+						open_location(5)
+					status("Location %d deleted" % id)), "Refused while a door or a script leads there")]))
+		var users := proj.loc_users(id).filter(func(u): return not u.begins_with("door in location %d " % id) and not u.begins_with("location %d " % id))
+		box.add_child(W.label("Reached from: " + ("; ".join(users.slice(0, 4)) + (" …" if users.size() > 4 else "") if not users.is_empty()
+			else "nothing yet (point a door's destination here, or a warp script)"), W.MUTED))
+		locs_box.add_child(box)
+		locs_box.add_child(HSeparator.new())
+	locs_box.add_child(W.label("Not saved by the game for ids >= %d: the stereo music choice and picked-up random props reset when the save is loaded." % LocExt.FIRST, W.MUTED))
+
+
 func _dlg_open_text(id: int) -> void:
 	if id < 0:
 		return
@@ -972,6 +1066,9 @@ func _unhandled_key_input(e: InputEvent) -> void:
 
 func open_location(id: int, keep := false) -> void:
 	var cam2 := [view2d.cx, view2d.cz, view2d.scale_px]
+	if not gd.has_location(id):   # a new location removed by undo / delete
+		id = 5
+		keep = false
 	loc = id
 	for i in loc_opt.item_count:
 		if loc_opt.get_item_id(i) == id:
@@ -993,7 +1090,7 @@ func open_location(id: int, keep := false) -> void:
 		block_opt.add_item("block 0 only" if k == 0 else "block 0 + %d" % k, k)
 	block_opt.select(block)
 	# collision (cached by content)
-	var bd := proj.current("bsp", gd.locations[loc].bsp)
+	var bd := proj.current("bsp", gd.loc(loc).bsp)
 	var h := hash(bd)
 	if not _brush_cache.has(h):
 		var t := Bsp.parse(bd)
@@ -1021,6 +1118,7 @@ func _rebuild_view(refit: bool) -> void:
 	_render_scripts()
 	_refresh_text_list()
 	_refresh_dialogue()
+	_render_locations()
 	if _find(sel) == null:
 		sel = ""
 	if mode == "items":
@@ -1155,15 +1253,15 @@ func _show_edited() -> void:
 	var nav := proj.nav_of(loc)
 	if nav >= 0 and proj.is_edited("layout", nav):
 		here.append("layout")
-	if proj.is_edited("bsp", gd.locations[loc].bsp):
+	if proj.is_edited("bsp", gd.loc(loc).bsp):
 		here.append("collision")
 	var slot := proj.furniture_slot(loc)
 	if slot >= 0 and proj.is_edited("furniture", slot):
 		here.append("furniture")
 	edited_lbl.text = "%d edited file(s)%s" % [proj.edits.size(), (" · here: " + " + ".join(here)) if not here.is_empty() else ""]
 	undo_btn.disabled = proj.undo_stack.is_empty()
-	status("%s · layout %s · BSP %d · %d solid cells" % [gd.locations[loc].place, str(nav) if nav >= 0 else "—",
-		gd.locations[loc].bsp, brushes.size()])
+	status("%s · layout %s · BSP %d · %d solid cells" % [gd.loc(loc).place, str(nav) if nav >= 0 else "—",
+		gd.loc(loc).bsp, brushes.size()])
 
 
 # =================================================================================================================
@@ -1529,7 +1627,7 @@ func render_details() -> void:
 			rows.append([k, "—" if v == null else (W.fmt(v.x) + ", " + W.fmt(v.y) + ", " + W.fmt(v.z) if v is Vector3 else str(v))])
 		if item.type == 4:
 			var dest: int = item.raw[0xE]
-			rows.append(["→ destination", "%d %s, entry %d" % [dest, GameData.PLACES[dest], item.raw[0x12]] if dest < GameData.LOC_COUNT else "?"])
+			rows.append(["→ destination", "%d %s, entry %d" % [dest, gd.place(dest), item.raw[0x12]] if gd.has_location(dest) else "?"])
 	details.add_child(W.kv_table(rows))
 
 	# edit form
@@ -1580,13 +1678,13 @@ func render_details() -> void:
 			if apply(e):
 				select("%d/%d/%d" % [it.block, it.group, proj.last_index]), "Copy to the end of the group (no index shift)"))
 		btns.add_child(W.button("Delete", _delete_item.bind(it), "Del"))
-		if item.type == 4 and item.raw[0xE] < GameData.LOC_COUNT:
+		if item.type == 4 and gd.has_location(item.raw[0xE]):
 			var dest: int = item.raw[0xE]
 			btns.add_child(W.button("Open destination", func(): open_location(dest)))
 	details.add_child(btns)
 	var shared := []
 	for l in proj.shared_with(loc):
-		if gd.locations[l].nav == gd.locations[loc].nav:
+		if gd.loc(l).nav == gd.loc(loc).nav:
 			shared.append(str(l))
 	if not shared.is_empty():
 		details.add_child(W.label("This layout is shared with location %s: edits change it too." % ", ".join(shared), W.WARN))
@@ -1987,11 +2085,11 @@ func on_2d_cell(x: float, z: float) -> void:
 
 
 func _revert_location() -> void:
-	ask("Drop every edit of %s (layout, collision, room furniture)?" % gd.locations[loc].place, func():
+	ask("Drop every edit of %s (layout, collision, room furniture)?" % gd.loc(loc).place, func():
 		var nav := proj.nav_of(loc)
 		if nav >= 0:
 			proj.revert("layout", nav)
-		proj.revert("bsp", gd.locations[loc].bsp)
+		proj.revert("bsp", gd.loc(loc).bsp)
 		var slot := proj.furniture_slot(loc)
 		if slot >= 0:
 			proj.revert("furniture", slot)

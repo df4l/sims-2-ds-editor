@@ -1083,3 +1083,31 @@ screenshots in `build/newloc_proto/`.
   (triggered by script sound op 0x2A0/0x2B and state returns; the phone menu does not call it).
 - **Next**: other per-location game-state arrays (timers Coll+0x220, dust, S+0x4418, 0xFC records), the hard-coded
   indoor list of Map_UpdateLocationAmbience (a per-location table instead of the 0x020766CC test patch).
+
+
+## 2026-11-20 — New location ids: full support checked (trampolines, emulator), Locations tab
+
+- **Trampolines (hypothesis: encodings and register use correct)**. Test: capstone disassembly of every trampoline
+  of the exported extension (build/newloc_test/arm9_ext.bin, hooks.txt) next to the original code of each site
+  (live registers after the site, flags, branches into replaced words, lr before the `bl` of the ov01 purchase hook).
+  Result: encodings correct. **One bug found**: the threshold was `cmp id,#33`, so id 33 (the "no location"
+  sentinel) took the new path (its name became City Hall's text instead of the original 0x64). Now `cmp id,#34`
+  everywhere, and the moved tables keep the original word 33. Test check added (location table word 33).
+- **Missing hook (emulator)**. A door 5 -> 34 warped to location 23 (RoomBeingBuilt2). The door warp FUN_0209b838
+  reads the construction timer S+0x4418[dest] a second time (0x0209B898 / B8A4); for 34 that is S+0x44A0, inside the
+  music array (0x2A bytes) -> "being built". Scan of every S+0x4418 access (literals 0x4400..0x449C, `#0x4xx]`
+  operands, ARM9 + overlays): this was the only one left. Hook at 0x0209B88C (ip = timer base). After it: 34 loads.
+  CONFIRMED (emulator).
+- **Test bugs**. (1) The Saloon door of location 5 is two door items: a model door [0,0,0] and a trigger box
+  [0,0,18], both dest 24; the Sim goes through the box. The test now re-targets every door item with dest 24.
+  (2) The test called undo once too often after deleting / restoring 36 and so cancelled the door edit; it now
+  checks the doors in the exported ROM itself.
+- **Emulator, all CONFIRMED (cold boots, build/newloc_test/)**: boot into 34, 35 and control 6; save in 35 -> save
+  and load screens show "Test Saloon"; loading puts the Sim back in 35; its door leads to 5; door 5 -> 34; the
+  construction menu (needs story flag 0x13, S+0x4814 bit 19; set in RAM for the test) lists "Test Saloon (Town
+  Square) §500", buying it takes the money, sets owned bit 35 and removes it from the list. Details:
+  docs/formats/arm9.md §7.
+- **Editor**: Locations tab (create from a template + name, behaves like, price / score / menu parent / offered,
+  name -> Text tab, open, delete; picker refreshed on undo). godot/tests/test_locations_ui.gd (11 checks).
+  `open_location` falls back to 5 when the location no longer exists. Prototype godot/tests/proto_newloc.gd removed
+  (its ROMs stay in build/newloc_proto/; its history is in git).
