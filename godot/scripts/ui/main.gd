@@ -87,6 +87,8 @@ var open_dlg: FileDialog
 var save_dlg: FileDialog
 var save_kind := "nds"      # what save_dlg writes: "nds" or "bps"
 var emu_dlg: FileDialog
+var scene_dlg: FileDialog     # Locations tab: glTF scene to import into a new location (_scene_opts)
+var _scene_opts := {}
 var msg_dlg: AcceptDialog
 var confirm_dlg: ConfirmationDialog
 var _confirm_cb := Callable()
@@ -184,6 +186,14 @@ func _build_dialogs() -> void:
 		if proj != null:
 			_test_in_emulator())
 	add_child(emu_dlg)
+	scene_dlg = FileDialog.new()
+	scene_dlg.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	scene_dlg.access = FileDialog.ACCESS_FILESYSTEM
+	scene_dlg.use_native_dialog = true
+	scene_dlg.filters = PackedStringArray(["*.glb, *.gltf ; glTF 3D scene"])
+	scene_dlg.title = "Import a 3D scene (glTF / GLB)"
+	scene_dlg.file_selected.connect(_import_scene)
+	add_child(scene_dlg)
 	msg_dlg = AcceptDialog.new()
 	msg_dlg.dialog_autowrap = true
 	msg_dlg.min_size = Vector2i(460, 0)
@@ -813,7 +823,7 @@ func _dlg_move(k: int, d: int) -> void:
 func _render_locations(force := false) -> void:
 	if gd == null or locs_box == null:
 		return
-	var sig := JSON.stringify(proj.newlocs()) + lang + str(proj.newlocs().map(func(L): return gd.place(L.id))) + str(loc)
+	var sig := JSON.stringify(proj.newlocs()) + lang + str(proj.newlocs().map(func(L): return gd.place(L.id))) + str(loc) 		+ str(proj.newlocs().map(func(L): return proj.scene_entries(L.id).map(func(e): return hash(proj.current("model", e)))))
 	if not force and sig == _locs_sig:
 		return
 	_locs_sig = sig
@@ -868,6 +878,29 @@ func _render_locations(force := false) -> void:
 			"In the construction menu as soon as building is unlocked (story flag 0x13)")
 		box.add_child(W.hbox([W.label("Menu parent", null, false), parent]))
 		box.add_child(offered)
+		# own 3D scene (glTF -> scene model files + collision)
+		box.add_child(W.label(_scene_summary(id, L.src), W.MUTED))
+		var sc := W.spin(0.01, 1000, 7.0, 0.01)
+		sc.tooltip_text = "Game units per file unit. 7 = file in metres (a Sim is about 12.5 units, 1.75 m); 1 = file already in game units"
+		var th := W.spin(0.1, 8, 0.5, 0.1)
+		th.tooltip_text = "Depth of the solid slab made behind each visible face (collision from the visible mesh)"
+		var auto := W.toggle("Solid visible faces", true, func(_on): pass,
+			"On: every visible face gets a thin solid slab behind it (objects named ...-nocol excepted).
+"
+			+ "Off: only the objects named ...-col are solid (one convex block each, not drawn).")
+		var scene_btns := [W.label("3D scene", null, false), W.button("Import .glb / .gltf…", func():
+			_scene_opts = {"id": id, "scale": sc.value, "thickness": th.value, "auto": auto.button_pressed}
+			scene_dlg.popup_centered_ratio(0.7),
+			"Replace this location's scene models and collision by a glTF scene (Blender: File > Export > glTF 2.0).
+"
+			+ "Entry points stay where they are: put the floor about 1 unit under them.")]
+		if proj.has_scene(id):
+			scene_btns.append(W.button("Use the template's", func():
+				if apply(proj.clear_scene(id)):
+					status("Location %d: back to the scene and collision of %d" % [id, L.src]),
+				"Back to the template's scene models and collision"))
+		box.add_child(W.hbox(scene_btns))
+		box.add_child(W.hbox([W.label("scale", null, false), sc, W.label("slab depth", null, false), th, auto]))
 		box.add_child(W.hbox([
 			W.button("Apply", func():
 				if apply(proj.set_new_location(id, {"alias": W.option_value(alias), "price": int(price.value),
@@ -887,6 +920,59 @@ func _render_locations(force := false) -> void:
 		locs_box.add_child(box)
 		locs_box.add_child(HSeparator.new())
 	locs_box.add_child(W.label("Not saved by the game for ids >= %d: the stereo music choice and picked-up random props reset when the save is loaded." % LocExt.FIRST, W.MUTED))
+
+
+func _scene_summary(id: int, src: int) -> String:
+	if not proj.has_scene(id):
+		return "Scene: the models and collision of %d · %s (template)." % [src, gd.place(src)]
+	var tri := 0
+	var size := 0
+	var files := proj.scene_entries(id)
+	for e in files:
+		var d := proj.current("model", e)
+		size += d.size()
+		var nb := Nsbmd.new()
+		if nb.parse(d):
+			var mdl := d.decode_u32(16)
+			var at := mdl + d.decode_u32(mdl + 8 + 16 + 4 * d[mdl + 9])
+			tri += d.decode_u16(at + 0x26)
+	var col := proj.current("bsp", gd.loc(id).bsp).size()
+	return "Scene: imported, %d triangles in %d model file(s) (%d KiB); collision %d KiB." % [tri, files.size(),
+		size / 1024, col / 1024]
+
+
+func _import_scene(path: String) -> void:
+	var id: int = _scene_opts.get("id", -1)
+	if id < 0:
+		return
+	status("Importing %s…" % path.get_file())
+	var t0 := Time.get_ticks_msec()
+	var err := proj.import_scene(id, path, _scene_opts.scale, _scene_opts.thickness, 256, _scene_opts.auto)
+	if not apply(err):
+		return
+	var r: Dictionary = proj.last_import
+	var m: Dictionary = r.model
+	var c: Dictionary = r.collision
+	var lines := PackedStringArray([
+		"%s imported into location %d (%.1f s)." % [path.get_file(), id, (Time.get_ticks_msec() - t0) / 1000.0],
+		"Model: %d triangles, %d textures, %d model file(s), %d KiB of texels (budget %d) + %d B of palettes." % [
+			m.triangles, m.textures, m.get("files", 1), m.tex_bytes / 1024, NsbmdWriter.TEX_BUDGET / 1024, m.pal_bytes],
+		"Collision: %d solid blocks (%d '-col' objects) -> %d nodes, depth %d (max %d), %d KiB." % [c.used_brushes,
+			r.col_objects, c.nodes, c.depth, BspBuild.MAX_DEPTH, c.bytes / 1024],
+		"Size: %s" % str((r.aabb as AABB).size.snapped(Vector3(0.1, 0.1, 0.1)))])
+	if not m.get("downscaled", []).is_empty():
+		lines.append("Halved to fit the texture memory: %d texture(s)." % m.downscaled.size())
+	if not m.get("recoloured", []).is_empty():
+		lines.append("Reduced to 16 colours (palette memory): %d texture(s)." % m.recoloured.size())
+	if m.uv_clamped > 0:
+		lines.append("Warning: %d texture coordinates out of range (a triangle spans more than ~8 repeats)." % m.uv_clamped)
+	for w in r.warnings:
+		lines.append("Warning: " + w)
+	if loc != id:
+		open_location(id)
+	show_msg("
+".join(lines), "Scene imported")
+	status("Location %d: scene imported" % id)
 
 
 func _dlg_open_text(id: int) -> void:

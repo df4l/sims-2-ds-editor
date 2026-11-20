@@ -106,6 +106,32 @@ the solid; the slide code (`p − n·dot(p, n)`) does not depend on the sign.
   screen, `C_delete.png`). ROM D (entry 0 at y 30, slab moved +10 in y): the Sim lands and stays at y = 10.0625,
   above the lobby floor (`D_move.png`); the original BSP gives 0.0625.
 
+### Trace limits — CONFIRMED (code), depth limit ASSUMED
+- `Clsn_TraceBoxBsp` reads only `flags & 7` (bit0 sign, bits 1-2 axis): bit3 and the root's high bits are ignored.
+  Arbitrary planes (axis 3) always have bit0 = 0 in the originals.
+- It walks the tree with an explicit stack of 0x3C-byte frames at DTCM 0x027E14AC (`DAT_01ffcec4`); the next
+  referenced DTCM symbol is 0x027E1E0C → 0x960 bytes = 40 frames (ASSUMED from the gap). Deepest original tree:
+  29 (Desert, 7 296 nodes, 251 948 bytes).
+
+### Compiling a BSP from brushes — CONFIRMED (data + emulator, 2026-11-20)
+`godot/scripts/core/bsp_build.gd` (`BspBuild.compile(brushes)`): convex brushes (planes, solid where n.p + d <= 0)
+→ Quake-style solid-leaf tree: a region is split by a facet plane of its brush fragments (fewest splits, balance,
+axial preferred); it becomes a solid leaf once a fragment fills it (all its facet planes on the path), empty when no
+fragment is left. Children are emitted first, then the plane is oriented so that the front child is a node or a
+solid leaf and the back child a node or empty (two solid children merge into one leaf). Leaf list = the path planes
+carrying a facet of the cell. Planes are quantised first (axial normals exact), so the tree and the geometry agree.
+- Data check (`godot/tests/test_bspbuild.gd`): the cells of 8 original locations recompiled; 4 000 random points per
+  location classified like the original (points within 0.01 of a plane skipped): Desert 986 cells → 4 704 nodes,
+  depth 30, 171 360 bytes (original 251 948); City Hall 11 896 (11 304); Atrium 35 140 (43 924); 22: same size.
+- Emulator: City Hall's cells recompiled as location 35 (`build/scene_test/scene_35.nds`) against the original
+  (`scene_6.nds`): same input (up + right, 300 frames, wall slides) → same Sim position to the bit
+  (−236456, 1024, −34503).
+- Brushes from meshes: `convex_brush` (a convex mesh's face planes), `slab_brushes` (a slab `thickness` deep behind
+  each face; coplanar triangles sharing an edge merged into convex polygons first).
+- Floors: entry points stand about 1 unit above the floor (City Hall: entry y = 1, floor top 0, the Sim rests at
+  0.0625). A floor top at the entry height puts the Sim's feet inside the slab: it fell through to the slab below
+  (emulator, first test room).
+
 ## 4. Layout file (rec+4, formerly "nav") — CONFIRMED, see docs/formats/layout.md
 Entry points, NPCs, props, interactive objects, trigger boxes, waypoints, lights/sounds and spawn scripts.
 Parsed by `Map_LoadNav` (0x02053128); tool `tools/layout.py` (byte-identical round-trip 32/32).
@@ -114,6 +140,17 @@ Parsed by `Map_LoadNav` (0x02053128); tool `tools/layout.py` (byte-identical rou
 `model[k]` of the record: BMD0 (+ BTA0 texture animation, + trs_anim). The `trs_anim` with 1 frame and N
 tracks found right after the BSP belongs to the scene model (anim_list), not to object placement as first
 guessed in phase 2.
+
+### Own scenes of new locations — CONFIRMED (emulator, 2026-11-20)
+A new location (ids 34..63, arm9.md §7) can replace its template's models and collision by an imported glTF scene
+(`EditProject.import_scene`, Locations tab): BMD0 files written by NsbmdWriter (docs/formats/bmd0.md) and a BSP
+compiled by BspBuild, appended to rom.bin. Its record: the template's first 0x14 bytes with model_count = number of
+files, special model 0xFFFF, field12 0xFFFF, then `{anim_list → dummy, u16 BMD0 entry, u16 0}` per file and the
+dummy anim entry `FF FF FF FF FF FF 00 00` (Map_LoadLocation reads anim_list[0].trs even without animation).
+Test ROMs (`godot/tests/test_scene.gd`, build/scene_test/): location 34 = a room built in code and imported from
+GLB (walls, checker texture, `-col` block, `-nocol` pillar): drawn, the Sim stands on its floor, walls and the
+invisible block stop it, the `-nocol` pillar does not (positions read in RAM); location 35 = City Hall re-encoded
+(2 files) looks like City Hall except the door frame (its special model, now a normal one).
 
 ## 6. Runtime: which location is loaded, and how to warp — CONFIRMED (code + emulator)
 Pointer chain (statics in arm9 .bss):

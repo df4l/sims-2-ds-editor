@@ -13,7 +13,7 @@ extends RefCounted
 ## from another block might mean this item (ambiguous).
 ## Every mutating function returns "" on success or the reason it was refused (nothing changed then).
 
-const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg", "newloc"]
+const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg", "newloc", "model"]
 const UNDO_MAX := 100
 
 var gd: GameData
@@ -66,6 +66,7 @@ func original(kind: String, entry: int) -> PackedByteArray:
 		"conv": return encode_convs(gd.rom_conversations())
 		"msg": return encode_msgs(gd.rom_messages())
 		"newloc": return "[]".to_utf8_buffer()
+		"model": return PackedByteArray()   # own scene model of a new location (SCENE + id): none
 		"layout", "text":
 			if entry >= VIRT:
 				return gd.rombin.raw_entry(gd.locations[_virt_src(entry)].nav)
@@ -115,7 +116,7 @@ func _write(k: String, data) -> void:
 				gd.set_bank_bytes(l, edits.get(k, PackedByteArray()))
 	if k.begins_with("conv:") or k.begins_with("msg:"):
 		_sync_tables()
-	if k.begins_with("newloc:") or k.begins_with("text:"):
+	if k.begins_with("newloc:") or k.begins_with("text:") or k.begins_with("model:"):
 		_sync_newlocs()
 
 
@@ -180,6 +181,7 @@ func shared_with(loc: int) -> Array:
 ## price > 0 = sold in the construction menu (ids <= LocExt.SALE_MAX), bought at once.
 
 const VIRT := 0x100000
+const SCENE := 0x200000   # SCENE + 0x100 * k + id: own scene model file k (BMD0) of new location id, see import_scene
 const NEWLOC_KEYS := ["id", "src", "alias", "name_text", "price", "score", "parent", "offered"]
 
 
@@ -217,9 +219,12 @@ func new_location_dicts() -> Array:
 	for L in newlocs():
 		var s: Dictionary = gd.locations[L.src]
 		var name := gd.text(L.name_text)
+		var own := has_scene(L.id)
 		out.append({"location": L.id, "place": name if name != "" else "new location %d" % L.id, "record": 0,
 			"bsp": VIRT + 2 * L.id + 1, "gmd1": s.gmd1, "nav": VIRT + 2 * L.id if s.nav != GameData.NONE else GameData.NONE,
-			"special_model": s.special_model, "field12": s.field12, "models": s.models, "new": true, "src": L.src})
+			"special_model": GameData.NONE if own else s.special_model, "field12": GameData.NONE if own else s.field12,
+			"models": scene_entries(L.id).map(func(e): return {"model": e, "anim_list": 0, "anims": 0}) if own else s.models, "new": true,
+			"src": L.src, "own_scene": own})
 	return out
 
 
@@ -329,10 +334,73 @@ func delete_new_location(id: int) -> String:
 	arr = arr.filter(func(x): return x.id != id)
 	_store_newlocs(arr)
 	_group = true
-	for k in [key("layout", VIRT + 2 * id), key("bsp", VIRT + 2 * id + 1)]:
+	for k in [key("layout", VIRT + 2 * id), key("bsp", VIRT + 2 * id + 1)] + scene_entries(id).map(func(e): return key("model", e)):
 		if edits.has(k):
 			undo_stack[-1].append([k, edits.get(k)])
 			_write(k, null)
+	_group = false
+	return ""
+
+
+## True when new location id has its own scene model (imported), instead of its template's models.
+func has_scene(id: int) -> bool:
+	return id >= LocExt.FIRST and is_edited("model", SCENE + id)
+
+
+## Virtual entries of the own scene's model files of new location id (file k = SCENE + 0x100 * k + id).
+func scene_entries(id: int) -> Array:
+	var out := []
+	for k in NsbmdWriter.MAX_FILES:
+		if is_edited("model", SCENE + 0x100 * k + id):
+			out.append(SCENE + 0x100 * k + id)
+	return out
+
+
+var last_import := {}   # report of the last import_scene: model / collision stats, warnings
+
+
+## Give new location id its own scene from a glTF / GLB file: scene model (NsbmdWriter) + collision (BspBuild).
+## scale = game units per file unit; thickness = depth of the collision slabs made from the visible faces;
+## auto_collision false = only the file's "-col" objects are solid.
+## One undo step. "" or an error (nothing changed).
+func import_scene(id: int, path: String, scale := 1.0, thickness := 0.5, max_tex := 256, auto_collision := true) -> String:
+	if newloc(id).is_empty():
+		return "location %d is not a new location: only new locations can get their own scene" % id
+	var si := SceneImport.new()
+	if not si.load_file(path, scale, thickness, auto_collision):
+		return si.error
+	return import_scene_from(id, si, max_tex)
+
+
+func import_scene_from(id: int, si: SceneImport, max_tex := 256) -> String:
+	if newloc(id).is_empty():
+		return "location %d is not a new location: only new locations can get their own scene" % id
+	var w := NsbmdWriter.new()
+	var files := w.build_split("Loc%d" % id, si.surfaces, max_tex)
+	if files.is_empty():
+		return "scene model: " + w.error
+	var bb := BspBuild.new()
+	var bsp := bb.compile(si.brushes)
+	if bsp == null:
+		return "collision: " + bb.error
+	last_import = {"model": w.stats, "collision": bb.stats, "warnings": si.warnings.duplicate(),
+		"col_objects": si.n_col_objects, "aabb": si.aabb}
+	_store("bsp", VIRT + 2 * id + 1, bsp.write())
+	_group = true
+	for k in NsbmdWriter.MAX_FILES:
+		_store("model", SCENE + 0x100 * k + id, files[k] if k < files.size() else PackedByteArray())
+	_group = false
+	return ""
+
+
+## Back to the template's scene models and collision. One undo step.
+func clear_scene(id: int) -> String:
+	if not has_scene(id):
+		return "location %d has no own scene" % id
+	_store("bsp", VIRT + 2 * id + 1, original("bsp", VIRT + 2 * id + 1))
+	_group = true
+	for e in scene_entries(id):
+		_store("model", e, PackedByteArray())
 	_group = false
 	return ""
 
@@ -347,6 +415,9 @@ func _appended_map() -> Dictionary:
 			n += 1
 		out[VIRT + 2 * L.id + 1] = n
 		n += 1
+		for e in scene_entries(L.id):
+			out[e] = n
+			n += 1
 	return out
 
 
@@ -363,6 +434,11 @@ func _appended_entries() -> Array:
 			out.append(d)
 		var kb := key("bsp", VIRT + 2 * L.id + 1)
 		out.append(S2Cmp.stored_blob(edits[kb]) if edits.has(kb) else gd.rombin.raw_entry(s.bsp))
+		for e in scene_entries(L.id):
+			var bm := S2Cmp.stored_blob(edits[key("model", e)])
+			while bm.size() % 4:
+				bm.append(0)
+			out.append(bm)
 	return out
 
 
@@ -373,11 +449,31 @@ func _install_list() -> Array:
 	for L in newlocs():
 		var s: Dictionary = gd.locations[L.src]
 		var rec := gd.a9.slice(s.record - GameData.BASE, s.record - GameData.BASE + 0x14 + 8 * s.models.size())
+		var self_ptrs := []
+		if has_scene(L.id):
+			# own scene: its model files, no animation. Map_LoadLocation still reads anim_list[0].trs, so every model
+			# points at one dummy entry {0xFFFF, 0xFFFF, 0xFFFF} after the model list (kind 0xFFFF = no animation,
+			# Unk_0201180c_InitLocModel).
+			var ents := scene_entries(L.id)
+			rec = rec.slice(0, 0x14)
+			rec.encode_u16(0x0E, ents.size())
+			rec.encode_u16(0x10, GameData.NONE)   # special model: none
+			rec.encode_u16(0x12, GameData.NONE)   # field12: none
+			var dummy := 0x14 + 8 * ents.size()
+			var m := PackedByteArray()
+			m.resize(8 * ents.size() + 8)
+			for k in ents.size():
+				m.encode_u16(8 * k + 4, amap[ents[k]])
+				self_ptrs.append([0x14 + 8 * k, dummy])
+			for k in 6:
+				m[8 * ents.size() + k] = 0xFF
+			rec.append_array(m)
 		rec.encode_u16(0, amap[VIRT + 2 * L.id + 1])
 		if s.nav != GameData.NONE:
 			rec.encode_u16(4, amap[VIRT + 2 * L.id])
 		var d: Dictionary = L.duplicate()
 		d["record"] = rec
+		d["self_ptrs"] = self_ptrs
 		out.append(d)
 	return out
 

@@ -80,11 +80,17 @@ func _process(_d: float) -> void:
 
 func get_mesh(entry: int, tex: int):
 	var k := "%d:%d" % [entry, tex]
+	var data := PackedByteArray()
+	if entry >= EditProject.SCENE:   # own scene of a new location: can be re-imported, key on the content
+		data = ed.proj.current("model", entry)
+		k += ":%d" % hash(data)
 	if meshes.has(k):
 		return meshes[k]
 	var nb := Nsbmd.new()
 	var mesh = null
-	if nb.parse(ed.gd.rombin.data(entry)):
+	if data.is_empty():
+		data = ed.gd.rombin.data(entry)
+	if nb.parse(data):
 		var v: PackedByteArray = ed.gd.rombin.data(tex) if tex >= 0 else PackedByteArray()
 		var mi := nb.build(v)
 		if mi != null:

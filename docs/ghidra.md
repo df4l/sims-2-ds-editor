@@ -285,3 +285,11 @@ listed as ovNN::address without renames.
 | ov04::0214a7a0 | (data) | state 0x29: fixed 5-id room list {29, 8, 15, 18, 20} + y positions at 0x0214A7A8 | confirmed (data) |
 | ov05::0214a124 / 0214a658 | (none) | state 0x22 (music picker): writes / reads the music override S+0x449C[world+0xF4] | confirmed (code) |
 
+Scene model loading (2026-11-20, own scenes, docs/formats/bmd0.md):
+
+| Address | Name | Role | Status |
+|---|---|---|---|
+| 0x020bd700 | Gfx_InitModelInstance | model instance init: Gfx_LoadModelResource(obj+0x58), then the render object on the model | partial |
+| 0x020bc1a8 | Gfx_LoadModelResource | rom.bin entry → Arc_LoadDecompressedArea1, texture VRAM setup (vtable +4 = Gfx_AllocModelTexVram), bind, shrink the heap block to the texel offset; resource cache by entry | confirmed (code) |
+| 0x020bd468 | Gfx_AllocModelTexVram | NNS default-setup-like: one VRAM allocation for plain texels, one for 4x4, one for palettes; returns 0 (textures not uploaded) when one fails | confirmed (code + emulator) |
+| 0x01ffc558 | Clsn_TraceBoxBsp | (existing) bookmark: trace stack 0x3C-byte frames at DTCM 0x027E14AC, 40 frames (assumed); only flags & 7 read | confirmed (code) |

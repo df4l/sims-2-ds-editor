@@ -36,6 +36,17 @@ The Godot binaries are not committed (see `.gitignore`).
    - **Text** tab: search the strings of the selected language (text or `0x49f`), edit one, Apply. Accented
      letters are allowed; the Huffman tree is rebuilt when a new character needs it. The game reads the text once
      at boot: check text edits from a fresh boot, not a savestate.
+   - **Locations** tab: new locations (ids 34..63) made from an original one (its scene, music, layout, collision):
+     name, "behaves like" (fog, ambient sounds, lights), price in the construction menu, delete. Lead a door or a
+     warp script to them.
+   - **Own 3D scene** of a new location (Locations tab, "Import .glb / .gltf…"): the glTF scene replaces the
+     template's scene models and collision. In Blender: model the place (Y up after export, 1 m = 7 game units
+     with the default scale 7; a Sim is about 12.5 units), texture it with the Base Color image of each material
+     (power-of-two sizes are kept as is, others are resized; colour textures up to 256 px), optional vertex
+     colours for baked lighting, then File > Export > glTF 2.0. Collision: every visible face gets a thin solid slab
+     behind it; objects named `…-col` are invisible solid blocks (convex), `…-nocol` are visible but not solid.
+     Keep the floor about 1 unit under the entry points (move them with the layout tools). Textures are fitted to
+     the game's texture memory automatically (the report says what was reduced). No lights / animations yet.
    - Ctrl+Z undo, **Revert location**, File > Discard every edit.
 4. **Export ROM…** writes a new `.nds`. The opened ROM is never written.
    - File > **Export as BPS patch…** writes a patch of the opened ROM instead (apply with Flips, ROM Patcher JS…).
@@ -63,6 +74,10 @@ so reopening the same ROM restores them.
 | `scripts/core/bsp.gd` | collision BSP, cell edits (`bsp.py`) |
 | `scripts/core/roomfurn.gd` | hotel room furniture placement, prop variant textures (`roomfurn.py`) |
 | `scripts/core/nsbmd.gd` | BMD0 → Godot mesh + textures (nitrogen + `nitro.py` UV fixes) |
+| `scripts/core/nsbmd_write.gd` | Godot meshes → BMD0 scene model files, palette textures, VRAM budgets (`docs/formats/bmd0.md`) |
+| `scripts/core/bsp_build.gd` | convex brushes → collision BSP (compiler), brushes from meshes |
+| `scripts/core/scene_import.gd` | glTF / GLB scene → surfaces + collision brushes |
+| `scripts/core/loc_ext.gd` | new location ids 34..63: ARM9 tables and hooks (`docs/formats/arm9.md` §6-7) |
 | `scripts/core/sprite.gd` | icon sprites (`s2sprite.py`) |
 | `scripts/core/project.gd` | edits, undo, autosave, export (former Python editor) |
 | `scripts/ui/*` | start screen, panels, top-down and 3D views |
@@ -79,6 +94,11 @@ godot --headless --path . --script res://tests/test_text.gd -- sims2.nds out_dir
 godot --headless --path . --script res://tests/test_scripts.gd -- sims2.nds out_dir   # layout scripts: text round-trip, edits, export
 godot --headless --path . --script res://tests/test_conversations.gd -- sims2.nds out_dir   # conversation / message tables, new strings, export
 godot --headless --path . --script res://tests/test_boot.gd -- sims2.nds out_dir [loc entry]   # direct-boot test ROM patch
+godot --headless --path . --script res://tests/test_newloc.gd -- sims2.nds out_dir   # new locations: project, export, ARM9 hooks
+godot --headless --path . --script res://tests/test_bmd0.gd -- sims2.nds out_dir   # BMD0 writer: dictionaries, models read -> write -> read
+godot --headless --path . --script res://tests/test_bspbuild.gd -- sims2.nds [locs]   # BSP compiler: boxes, original locations recompiled
+godot --headless --path . --script res://tests/test_scene.gd -- sims2.nds out_dir [max_tex]   # own scenes: GLB import, export, test ROMs
 godot --path . --script res://tests/test_dialogue_ui.gd -- sims2.nds   # Dialogue tab smoke test (needs a window)
+godot --path . --script res://tests/test_locations_ui.gd -- sims2.nds [out_dir/test_room.glb]   # Locations tab (+ scene import)
 godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]]   # UI screenshot
 ```

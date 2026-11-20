@@ -310,7 +310,7 @@ static func music_hook(m: Arm9Mod, ovl: Dictionary) -> String:
 # --- everything ---------------------------------------------------------------------------------------------------
 
 ## Install the new locations. `locs`: [{id, src, record (PackedByteArray, the new record), alias, name_text, price,
-## score, parent, offered}] with ids FIRST..MAX_ID. "" or an error. Overlay words go to `ovl`.
+## score, parent, offered, self_ptrs (optional: [[pointer offset, target offset]] inside the record)}] with ids FIRST..MAX_ID. "" or an error. Overlay words go to `ovl`.
 static func install(m: Arm9Mod, ovl: Dictionary, locs: Array) -> String:
 	if locs.is_empty():
 		return ""
@@ -338,6 +338,10 @@ static func install(m: Arm9Mod, ovl: Dictionary, locs: Array) -> String:
 		if a == 0:
 			return m.error
 		tab.encode_u32(4 * id, a)
+		# pointers from the record into itself ([offset of the pointer, offset of the target]), e.g. the dummy anim list
+		# of an own scene model
+		for sp in by_id[id].get("self_ptrs", []):
+			m.write_u32(a + sp[0], a + sp[1])
 	var r := m.relocate(LOC_TABLE, 33 * 4, tab)
 	if r.is_empty():
 		return m.error

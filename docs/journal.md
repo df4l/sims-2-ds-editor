@@ -1111,3 +1111,50 @@ screenshots in `build/newloc_proto/`.
   name -> Text tab, open, delete; picker refreshed on undo). godot/tests/test_locations_ui.gd (11 checks).
   `open_location` falls back to 5 when the location no longer exists. Prototype godot/tests/proto_newloc.gd removed
   (its ROMs stay in build/newloc_proto/; its history is in git).
+
+
+## 2026-11-20 (later) — Own 3D scenes for new locations: BMD0 writer, BSP compiler, glTF import
+
+Goal: a new location (34..63) gets its own geometry from a glTF scene instead of its template's models.
+- **Survey of the 65 scene models** (hypothesis: a small subset of NNS G3D is enough). Script over every location
+  model: GPU commands, texture formats, counts. Result: baked vertex colours (0x20), few normals, no matrix commands
+  in the display lists; 4x4 (533) and 8bpp (337) textures; ≤ 3 models per location. Writer target = one node, one
+  material + shape per surface, render commands copied from Jail_Ext (docs/formats/bmd0.md §1).
+- **Loader** (Ghidra): Map_LoadLocation accepts anim_count 0 but reads anim_list[0].trs → dummy anim entry
+  {FFFF, FFFF, FFFF}. No name lookups. CONFIRMED (code + emulator).
+- **Dictionaries** (hypothesis: NNS patricia tree, zero-key root, insertion in index order). Test: rebuild every
+  dictionary of the 329 BMD0 of rom.bin. First result 1 738 / 2 626: same tree but other node numbers on
+  multi-node dictionaries → nodes are numbered in preorder. After the fix 2 626 / 2 626 byte-identical. CONFIRMED.
+- **Read → write → read** of the 65 scene models: same triangles within one VTX_16 step, same colours (first test
+  compared exact quantised keys: false failures at rounding boundaries; now a tolerance match). CONFIRMED.
+- **BSP compiler** (godot/scripts/core/bsp_build.gd). Trace limits from Clsn_TraceBoxBsp: only flags & 7 read;
+  explicit stack of 0x3C frames at DTCM 0x027E14AC, 40 frames (ASSUMED from the next symbol); original depth ≤ 29.
+  Test: recompile the cells of 8 locations, compare 4 000 random points each: all agree (Desert 986 cells → depth 30,
+  171 KB vs 252 KB). One bug found on Desert: a subtree that collapses into one solid leaf ended on a back side
+  (not allowed) → children are emitted first, then the plane is oriented. Emulator A/B: City Hall recompiled vs
+  original, same input → same Sim position to the bit. CONFIRMED.
+- **glTF import + project** (scene_import.gd, EditProject.import_scene, keys model:SCENE+0x100k+id, record with
+  self pointers to the dummy anim entry, LocExt.install self_ptrs). godot/tests/test_scene.gd builds a room in code,
+  writes it as GLB with Godot's glTF writer and imports it back.
+- **Emulator, location 34 (test room)**: rendered (walls, vertex colours, checker texture). First build: the Sim sat
+  at y −0.44, inside the floor box: the floor top was at the entry height, the Sim's feet started inside the 0.5
+  slab and it fell to the bottom face's slab. Originals keep the floor ~1 unit under the entries (City Hall entry 1,
+  floor 0) → room lowered by 1: Sim at y 0.0625 on the floor; east wall stops it at x −6.34 (face −4 − radius),
+  the invisible `-col` block at x −21.66 (face −24 + radius), the `-nocol` pillar lets it through. CONFIRMED.
+  Design change found on the way: `-col` objects used to replace the automatic collision (the floor vanished as soon
+  as one existed); now they add to it (option to turn the automatic part off).
+- **Emulator, location 35 (City Hall re-encoded, 8bpp)**: geometry right, textures garbage. Hypotheses: (1) total
+  texture budget — originals reach 190 784 texels: 183 552 and 149 760 still broke, so not the total; (2) the
+  file size — no; (3) code: Gfx_LoadModelResource → Gfx_AllocModelTexVram makes ONE VRAM allocation per file for
+  its plain texels and gives up on failure. Originals: largest plain block in one file 116 480, Gym's 151 552 are
+  two files. Test: same 149 760 split into 2 files (≤ 116 480 each) → renders like City Hall
+  (build/scene_test/scene_35_split.png). CONFIRMED: per-file limit (exact value between 50 944 and 149 760,
+  128 KiB VRAM slots ASSUMED). Writer: budgets 116 480 / file, 151 552 / location, palettes 17 120; textures
+  packed into ≤ 4 files, largest halved when over.
+- **Editor**: Locations tab, per new location: Import .glb / .gltf (scale, slab depth, automatic collision), report
+  (triangles, textures, files, budget, collision depth, warnings), "Use the template's". 3D view shows the
+  imported model. godot/tests/test_locations_ui.gd extended (import, report, 3D view, back to template).
+- Ghidra: Gfx_LoadModelResource 0x020bc1a8, Gfx_AllocModelTexVram 0x020bd468, Gfx_InitModelInstance 0x020bd700,
+  bookmark on Clsn_TraceBoxBsp (trace stack).
+- Open: 4x4 texture encoder (2.5× more texture detail, separate VRAM block), lit materials, texture animations,
+  camera of a new location (it keeps the template's: in the test room it looked from outside the walls at first).

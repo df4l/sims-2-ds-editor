@@ -163,3 +163,7 @@ the save slot shows "Test Saloon" (ov08 hook), the load screen too (0x0206EA28 /
 -> 34: walking in loads 34. Construction menu (story flag 0x13 set in RAM): "Test Saloon (Town Square) §500" listed,
 bought: money 2000 -> 1500, owned bit 35 set (Coll+0x21C = 8), gone from the list.
 
+### Own scene records (2026-11-20)
+`LocExt.install` accepts `self_ptrs` per location: [[pointer offset, target offset]] inside the record, written as
+absolute addresses once the record is placed in the extension. Used by own scenes: every model's anim_list pointer
+targets the dummy anim entry stored after the model list (docs/formats/location.md §5, bmd0.md §3).

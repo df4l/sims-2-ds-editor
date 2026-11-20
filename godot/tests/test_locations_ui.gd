@@ -1,6 +1,7 @@
 extends SceneTree
-## Smoke test of the Locations tab: Godot --path godot --script res://tests/test_locations_ui.gd -- rom.nds
-## (needs a window: not --headless). Create a new location from the tab, set its price, open it, undo, delete.
+## Smoke test of the Locations tab: Godot --path godot --script res://tests/test_locations_ui.gd -- rom.nds [room.glb]
+## (needs a window: not --headless). Create a new location from the tab, set its price, open it, undo, delete;
+## with room.glb (written by tests/test_scene.gd): import it as the scene of a new location, then drop it.
 ## The project folder of the input ROM is wiped first and at the end.
 
 var fails := 0
@@ -94,6 +95,28 @@ func _run() -> void:
 	ui._confirm_cb.call()
 	await process_frame
 	check(not ui.gd.has_location(34), "Delete removes it")
+
+	# own 3D scene: import the test room written by tests/test_scene.gd (2nd argument), then back to the template
+	if OS.get_cmdline_user_args().size() > 1:
+		ui.proj.add_new_location(6, "UI Scene")
+		ui.open_location(34)
+		ui._render_locations(true)
+		check(_buttons(ui, "Import .glb / .gltf…").size() == 1 and _buttons(ui, "Use the template's").is_empty(),
+			"34 offers the scene import, no 'template' button yet")
+		ui._scene_opts = {"id": 34, "scale": 1.0, "thickness": 0.5, "auto": true}
+		ui._import_scene(OS.get_cmdline_user_args()[1])
+		ui.msg_dlg.hide()
+		for _i in 4:
+			await process_frame
+		ui._render_locations()
+		check(ui.proj.has_scene(34) and ui.gd.loc(34).models[0].model == EditProject.SCENE + 34, "import -> own scene")
+		check(ui.msg_dlg.dialog_text.find("triangles") >= 0, "import report shown: " + ui.msg_dlg.dialog_text.replace("
+", " | "))
+		check(_buttons(ui, "Use the template's").size() == 1, "tab re-rendered with the 'template' button")
+		check(ui.view3d.get_mesh(EditProject.SCENE + 34, -1) != null, "3D view builds the imported model")
+		_buttons(ui, "Use the template's")[0].pressed.emit()
+		await process_frame
+		check(not ui.proj.has_scene(34), "'Use the template's' drops the own scene")
 
 	ui.proj.discard_all()
 	print("FAILURES: ", fails)

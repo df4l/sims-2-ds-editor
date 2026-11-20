@@ -113,7 +113,14 @@ Code-driven approach:
 
 > Update this section at the end of every session.
 
-- Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations)
+- Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations, own 3D scenes)
+- 2026-11-20 (latest): own 3D scenes for new locations DONE. glTF / GLB → BMD0 files (NsbmdWriter,
+  docs/formats/bmd0.md) + compiled BSP (BspBuild, docs/formats/location.md §3); Locations tab "Import .glb / .gltf".
+  CONFIRMED in melonDS (build/scene_test/): test room drawn and solid as designed (34); City Hall re-encoded (35)
+  looks and collides like City Hall (same Sim position to the bit). Limits found: one VRAM allocation per BMD0 file
+  (≤ 116 480 B plain texels per file, scenes split into ≤ 4 files), BSP trace stack ~40 levels, floor ~1 unit under
+  the entry points. Tests: test_bmd0 (2 626/2 626 dictionaries byte-identical), test_bspbuild, test_scene,
+  test_locations_ui (+ all other suites pass). Next ideas: 4x4 texture encoder, lit materials, per-location camera.
 - 2026-11-20 (latest): new location ids 34..63 DONE. LocExt.install (godot/scripts/core/loc_ext.gd, docs/formats/arm9.md §7):
   64-entry location table + own records, "behaves like" alias, name text table (15 sites), price / offered tables,
   dust, 0xFC prop records, construction timer (3 sites incl. the door warp 0x0209B88C), ov01 purchase / menu.
