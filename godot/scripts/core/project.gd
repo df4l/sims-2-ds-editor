@@ -13,7 +13,7 @@ extends RefCounted
 ## from another block might mean this item (ambiguous).
 ## Every mutating function returns "" on success or the reason it was refused (nothing changed then).
 
-const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg", "newloc", "model"]
+const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg", "newloc", "model", "arcade"]
 const UNDO_MAX := 100
 
 var gd: GameData
@@ -67,6 +67,7 @@ func original(kind: String, entry: int) -> PackedByteArray:
 		"msg": return encode_msgs(gd.rom_messages())
 		"newloc": return "[]".to_utf8_buffer()
 		"model": return PackedByteArray()   # own scene model of a new location (SCENE + id): none
+		"arcade": return PackedByteArray()  # own arcade game on cabinet `entry` (ArcadeExt.FREE_PROPS): none
 		"layout", "text":
 			if entry >= VIRT:
 				return gd.rombin.raw_entry(gd.locations[_virt_src(entry)].nav)
@@ -1369,7 +1370,34 @@ func arm9_mod() -> Arm9Mod:
 		m.error = _apply_msgs(m)
 	if m.error == "" and not newlocs().is_empty():
 		m.error = LocExt.install(m, ovl_patches, _install_list())
+	if m.error == "" and not arcade_games().is_empty():
+		m.error = ArcadeExt.install(m, arcade_games())
 	return m
+
+
+# --- own arcade games (ArcadeExt, docs/formats/arcade.md) ------------------------------------------------------------
+
+## [{prop, source, name}] of the cabinets that run an own game, by prop id.
+func arcade_games() -> Array:
+	var out := []
+	for prop in ArcadeExt.FREE_PROPS:
+		if is_edited("arcade", prop):
+			out.append({"prop": prop, "source": edits[key("arcade", prop)].get_string_from_utf8(),
+				"name": gd.prop_game_name(prop)})
+	return out
+
+
+## Put a game (ArmAsm source with init / update / free) on cabinet 174, 175 or 176; "" source = back to the original.
+## The source is assembled once here to report errors early.
+func set_arcade_game(prop: int, source: String) -> String:
+	if not ArcadeExt.FREE_PROPS.has(prop):
+		return "cabinet %d is not a free slot (174, 175, 176)" % prop
+	if source != "":
+		var r := ArcadeExt.assemble_game(Arm9Mod.new(gd.a9), source)
+		if r.has("error"):
+			return r.error
+	_store("arcade", prop, source.to_utf8_buffer())
+	return ""
 
 
 ## Direct boot (test ROMs only). At power on the game runs the intro movie (state 0x26) on the top slot and the logo
@@ -1463,7 +1491,7 @@ func has_furniture_edits() -> bool:
 
 func has_arm9_edits() -> bool:
 	for k in edits:
-		if k.begins_with("furniture:") or k.begins_with("conv:") or k.begins_with("msg:"):
+		if k.begins_with("furniture:") or k.begins_with("conv:") or k.begins_with("msg:") or k.begins_with("arcade:"):
 			return true
 	return not newlocs().is_empty()
 

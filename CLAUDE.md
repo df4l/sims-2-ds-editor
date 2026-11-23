@@ -114,6 +114,18 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations, own 3D scenes)
+- 2026-11-23 (latest): own arcade games, step 1 DONE. ArmAsm (godot/scripts/core/arm_asm.gd, ARM assembler in GDScript,
+  57/57 encodings = capstone) + ArcadeExt (arcade_ext.gd: table moved to the extension, cabinets 174/175/176 get own
+  types 10..; edit kind `arcade:<prop>`). Test card on 174 CONFIRMED in melonDS (build/arcade_test/card/: shown on the
+  cabinet, scrolls, input inverts it byte-exact, Stop frees). Tests: test_armasm (+ tools/check_armasm.py), test_arcade.
+  Agreed plan (user: "option 2"): a small VM (bytecode interpreter written in ArmAsm in the extension, same VM in
+  GDScript for an in-editor preview), games authored in the editor (script + 16×8 sprites + 4-colour palette). No UI yet.
+- 2026-11-23: arcade machines reverse-engineered (docs/formats/arcade.md). Each cabinet runs a software
+  mini-game into a 128×128 2bpp buffer uploaded over the model's screen texture every frame
+  (Gfx_UploadModelTexImage 0x020bbde8 — NOT a bg_composite codec, that lead is reopened). Table 0x0211E200 = 10 ×
+  {Init, Update, Free}; prop → type in the prop cases; props 174–176 (Lunar Lander, Space Gunner, Log Jump) were never
+  implemented (fall back to Space Armada), type 9 is a stub. CONFIRMED in melonDS (build/arcade_test/). Next: own arcade
+  games (choose: native ARM code vs a small VM interpreted in the ARM9 extension, authored in the editor).
 - 2026-11-20 (latest): 4x4 texture encoder DONE (godot/scripts/core/tex4x4.gd, docs/formats/bmd0.md §6): colour-pair
   codebook like the game's own 4x4 textures (re-encodes them at 52-58 dB); scene import option "4x4 textures" (on by
   default). CONFIRMED in melonDS: City Hall in 4x4 (location 36) = City Hall, 49 textures none halved (8bpp: 10
@@ -202,12 +214,22 @@ Code-driven approach:
 - Model textures fixed (2026-10-06): `tools/nitro.py bmd0_to_glb` replaces the nitrogen CLI. It fixes nitrogen's flipped V,
   its lost repeat/mirror wrap (taken from the material teximage_param) and its wrong NNS Maya texture SRT. 175/175 regenerated and
   checked against the game screenshots; the Maya formula itself comes from noclip (not confirmed in arm9).
+- Backlog (agreed with the user 2026-11-23, "total editor"; in progress: arcade machines):
+  - **Blender round-trip**: "Edit in Blender" button (export the location scene to .glb, launch blender.exe chosen once
+    like the emulator), watch the file and re-import on save (BMD0 + BSP + 3D view refresh); optional Blender add-on
+    ("Send to editor", scale 1 m = 7 units, Sim dummy, -col/-nocol, VRAM budget). Blender cannot be embedded in the window.
+  - **Sims / characters**: Create-a-Sim, clothes, hair, NPC models. Known: 131 64×64 8bpp textures, palette elsewhere
+    (catalog.md img8_nopal); palettes, models and skeletons not studied.
+  - **Animations** (skeletons, BCA?), **2D graphics** (UI, icons, bg_composite codec FUN_020bbde8),
+    **sound / music** (SDAT), **gameplay tables** (prices, objects, stats).
+  - **Arcade machines** (props 164–176): how the screen / game works, then own arcade games.
 - Next step (to agree with the user). Older list from milestone 3:
   - drag in 3D;
   - editing scripts and text from the editor;
   - waypoint link display and editing;
   - a sign proof for the facing angle (rotate an NPC by 90° and compare).
-- Blockers: none. bg_composite tile codec still unknown (FUN_020bbde8).
+- Blockers: none. bg_composite tile codec still unknown (FUN_020bbde8 turned out to be a model texture upload,
+  2026-11-23: bg_composite may be model texture data, to check).
 
 ## Information to be filled in by the user
 

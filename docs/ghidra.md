@@ -293,3 +293,16 @@ Scene model loading (2026-11-20, own scenes, docs/formats/bmd0.md):
 | 0x020bc1a8 | Gfx_LoadModelResource | rom.bin entry → Arc_LoadDecompressedArea1, texture VRAM setup (vtable +4 = Gfx_AllocModelTexVram), bind, shrink the heap block to the texel offset; resource cache by entry | confirmed (code) |
 | 0x020bd468 | Gfx_AllocModelTexVram | NNS default-setup-like: one VRAM allocation for plain texels, one for 4x4, one for palettes; returns 0 (textures not uploaded) when one fails | confirmed (code + emulator) |
 | 0x01ffc558 | Clsn_TraceBoxBsp | (existing) bookmark: trace stack 0x3C-byte frames at DTCM 0x027E14AC, 40 frames (assumed); only flags & 7 read | confirmed (code) |
+| 0x02029a94 | Arc_ControllerCtor | CArcadeController (vtable 0x02130c70), actor task 0x31: +0x28 game type, +0x2C state (docs/formats/arcade.md) | confirmed |
+| 0x02029cf4 | Arc_ControllerParams | task params ctor (type byte at +0x10, set by the prop case) | confirmed |
+| 0x02029a68 | Arc_ControllerInit | type = params+0x10 | confirmed |
+| 0x02029974 | Arc_ControllerUpdate | per frame: attract (types 3/5/6 animated) or game Update | confirmed |
+| 0x02029394 | Arc_ControllerShowAttract | blank palette, Init(actor,1), Update once | confirmed |
+| 0x0202941c | Arc_ControllerOnEvent | 0x33 insert coin ($1, camera, Init(actor,0)), 0x34 stop | confirmed (code + emulator) |
+| 0x02029c64 / 0x02029bcc | Arc_ControllerDtor / Arc_ControllerDeletingDtor | Free() for types 3/5/6, stop sound | confirmed |
+| 0x0208e13c | Arc_InteractableCtor | CInteractableArcade (vtable 0x02133820): Insert Coin / Stop menu | confirmed |
+| 0x0208df00 | Arc_InteractableOnAction | money check G+0x2F60 ≥ 1, starts the Sim interaction | partial |
+| 0x020bbde8 | Gfx_UploadModelTexImage | (model, tex, src, size, immediate): texels over a model texture in VRAM (was "bg_composite codec" lead) | confirmed |
+| 0x020bbcf0 | Gfx_UploadModelTexPalette | (model, pal, src, size, offset, immediate): palette over a model palette in VRAM | confirmed |
+| 0x0209bac8 / 0x0209ba2c | Arc0_DrawSprite16x8 / Arc0_DrawGlyph8x5 | 1bpp sprite / digit OR'ed into the 128×128 2bpp screen | confirmed |
+| 0x0211E200 (data) | ArcN_<Game>_Init/Update/Free | 10 × {Init, Update, Free}, all 30 functions named (types 0..9) | confirmed |

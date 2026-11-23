@@ -155,11 +155,11 @@ Gfx_ReplaceModelTexture 0x020bbee0(actor + 0x1A4, buf)
   Only the code table is used.
 - Exceptions: prop **104 PlasmaTV** loads entry 8249 directly (`ldr r1,=8249`). That is a 32×64 strip that does not fit
   its 32×32 textures (probably screen frames), so the editor keeps the model's own textures. The **arcade machines
-  164–176** have a blank `ArcadeScreen` texture but no such call: their screen is drawn by other code, so the editor shows it black.
+  164–176** have a blank `ArcadeScreen` texture but no such call: their screen is drawn by other code (a software mini-game uploaded every frame, docs/formats/arcade.md), so the editor shows it black.
 - Visual check (2026-10-09): the 122 swapped textures as a contact sheet. Each family shows its colours, and the
   toilets alternate clean / dirty. Test: `tests/test_roomfurn.py test_prop_variant_textures`.
 
 ## 5. Open points
-- the arcade screen texture (164–176) and the PlasmaTV strip 8249 (104);
+- the PlasmaTV strip 8249 (104) (arcade screens: solved, docs/formats/arcade.md);
 - fields 0x10, 0x16 and the second cell layer of the grid file; bytes 6–7 of a wall slot; byte 0 of a node file;
 - the 7 u32 per room in the game state.

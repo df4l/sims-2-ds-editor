@@ -1183,3 +1183,41 @@ Goal: more texture detail in imported scenes (8bpp City Hall needed 10 textures 
   Conclusion: the 4x4 space left per location is between 64 and 96 KiB (rest used by Sims / NPCs / props, ASSUMED).
   Budgets: 65 536 per file, 67 584 per location.
 - Open: lit materials, texture animations, per-location camera; finer 4x4 limit (64..96 KiB, depends on the NPCs?).
+
+## 2026-11-23 — Arcade machines (props 164–176)
+
+Goal: understand why arcade screens are black and how the games work, toward own arcade games.
+- **Lead**: RTTI strings `17CArcadeController` / `19CInteractableArcade` → typeinfo → vtables 0x02130c70 / 0x02133820.
+- **Code**: the controller (task 0x31) calls a 10-entry table 0x0211E200 of {Init, Update, Free}. Space Armada Update
+  clears a 0x1000 buffer, runs the game, draws 1bpp sprites in 2bpp, then FUN_020bbde8(actor+0x1A4, 1, buf, 0x1000) →
+  **FUN_020bbde8 is a model texture upload, FUN_020bbcf0 a palette upload** (renamed Gfx_UploadModelTexImage /
+  Gfx_UploadModelTexPalette). Earlier journal entries assumed FUN_020bbde8 was the bg_composite tile codec: reopen that
+  lead (bg_composite may be texture data for models; NOT checked).
+- **Prop → type**: the 13 Prop_CreatePlacementObject cases (jump table 0x02011E2C) store a type byte: 164 random 0..9,
+  165..173 = 0,1,3,4,2,5,6,7,8, and 174 / 175 / 176 (Lunar Lander, Space Gunner, Log Jump) = 0 → unimplemented games.
+- **Emulator** (build/arcade_test/loc24, direct boot into location 24, Space Armada at layout item 23): menu
+  "Insert Coin ($1)", money 2000 → 1999 (G+0x2F60 confirmed). Screen buffer [0x0213E59C] dumped and decoded as
+  128×128 2bpp: aliens 7×4, cannon moved left, shot (screen0.png). CONFIRMED.
+  Controller found in RAM by its vtable (0x0215D104); type byte +0x28 forced to 9 after Stop, Insert Coin again →
+  type 9 buffer ([0x0213E6C4]) = one small sprite at (25, 50): stub (screen9.png). CONFIRMED.
+- Side note: the gameplay camera ended up inside the cabinet (Sim teleported in front of it); not investigated.
+- Format sheet: docs/formats/arcade.md. Next: own games in the free slots 174–176 (see the sheet §6).
+
+## 2026-11-23 (later) — Own arcade games: assembler + test card on cabinet 174
+
+Goal (user: option 2 = a VM in the ARM9 extension, start with a test card): validate the whole path before the VM.
+- No ARM toolchain on the machine (no gcc/clang/keystone) → **ArmAsm** (godot/scripts/core/arm_asm.gd): two-pass ARM
+  assembler (data processing with operand2 auto-swap, mul/long mul, clz, all ldr/str forms, ldm/stm/push/pop, b/bl/bx/blx,
+  adr, `ldr =` literal pools, .word/.hword/.byte/.ascii/.align/.pool/.equ, expressions). Test: test_armasm.gd writes 57
+  instructions + expected text; tools/check_armasm.py decodes with capstone: 57/57 identical (after fixing 5 wrong
+  *expectations*: pc-relative offsets checked by hand, capstone prints a 1-register stmdb as stmdb). Errors refused.
+- **ArcadeExt** (godot/scripts/core/arcade_ext.gd): table 0x0211E200 moved to the extension (+ own types 10..), the 9
+  literal words rewritten (a scan finds exactly those 9 words pointing into the table), cabinet case `mov r3,#0` →
+  `mov r3,#type`. Project edit kind `arcade:<prop>`. Test test_arcade.gd: 54 checks, capstone listing of the
+  extension reviewed by hand (calls, pool, table).
+- **Emulator** (build/arcade_test/card/arcade_card.nds): cabinet 174 = "Arcade-Lunar Lander", attract frame visible,
+  game runs (frame counter at 0x0215304C), buffer = expected card byte for byte with A held (inverted), Stop → Free.
+  Update is called every 2nd frame (30 Hz). CONFIRMED.
+- Pitfall: a read at 0x0215404C instead of 0x0215304C looked like "update never runs" — compute addresses with
+  Python (memory note).
+- Next: the VM (bytecode + interpreter in ArmAsm, same interpreter in GDScript for a preview in the editor).

@@ -78,6 +78,8 @@ so reopening the same ROM restores them.
 | `scripts/core/nsbmd.gd` | BMD0 → Godot mesh + textures (nitrogen + `nitro.py` UV fixes) |
 | `scripts/core/nsbmd_write.gd` | Godot meshes → BMD0 scene model files, palette textures, VRAM budgets (`docs/formats/bmd0.md`) |
 | `scripts/core/tex4x4.gd` | 4x4-compressed texture encoder (colour-pair codebook, `docs/formats/bmd0.md` §6) |
+| `scripts/core/arm_asm.gd` | small ARM assembler (labels, literal pools, directives) for code in the ARM9 extension |
+| `scripts/core/arcade_ext.gd` | own arcade games on cabinets 174–176: game table moved, cabinet type patch, test card (`docs/formats/arcade.md`) |
 | `scripts/core/bsp_build.gd` | convex brushes → collision BSP (compiler), brushes from meshes |
 | `scripts/core/scene_import.gd` | glTF / GLB scene → surfaces + collision brushes |
 | `scripts/core/loc_ext.gd` | new location ids 34..63: ARM9 tables and hooks (`docs/formats/arm9.md` §6-7) |
@@ -103,6 +105,8 @@ godot --headless --path . --script res://tests/test_bspbuild.gd -- sims2.nds [lo
 godot --headless --path . --script res://tests/test_scene.gd -- sims2.nds out_dir [max_tex]   # own scenes: GLB import, export, test ROMs
 godot --headless --path . --script res://tests/test_tex4x4.gd -- sims2.nds [n]   # 4x4 texture encoder: quality vs the game's, format
 godot --headless --path . --script res://tests/probe_tex4x4.gd -- sims2.nds out_dir   # 4x4 VRAM probe ROMs (emulator, not pass / fail)
+godot --headless --path . --script res://tests/test_armasm.gd -- out_dir   # assembler; then python tools/check_armasm.py out_dir (capstone)
+godot --headless --path . --script res://tests/test_arcade.gd -- sims2.nds out_dir   # own arcade game install + test-card ROM (location 24)
 godot --path . --script res://tests/test_dialogue_ui.gd -- sims2.nds   # Dialogue tab smoke test (needs a window)
 godot --path . --script res://tests/test_locations_ui.gd -- sims2.nds [out_dir/test_room.glb]   # Locations tab (+ scene import)
 godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]]   # UI screenshot
