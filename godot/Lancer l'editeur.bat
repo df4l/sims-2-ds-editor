@@ -2,6 +2,7 @@
 rem Starts the Sims 2 DS map editor with the Godot binary of this folder (no install, no Python).
 cd /d "%~dp0"
 for %%G in (Godot_v4*_win64.exe) do (
+  if not exist ".godot\global_script_class_cache.cfg" "%%G" --headless --path "%~dp0" --import
   start "" "%%G" --path "%~dp0" %*
   goto :eof
 )
