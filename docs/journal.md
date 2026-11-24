@@ -1241,3 +1241,21 @@ the same VM in GDScript for the preview (docs/formats/arcade_vm.md).
   themselves: tested key by key → **A stops the session** (the Sims UI takes A for the selected bottom-screen action,
   "Stop"); LEFT, RIGHT, UP, B, X, Y do not. Example switched from A to B. Documented in arcade_vm.md §1.
 - Next: the Arcade tab in the editor (source, live preview, sprites / palette, cabinet choice).
+
+## 2026-11-24 (later) — Arcade tab in the editor
+
+- `godot/scripts/ui/arcade_tab.gd` (ArcadeTab), wired in main.gd (tab "Arcade", refreshed with the other tabs; while
+  shown, the item list is hidden and the side panel widened). Layout: left column = preview 256×256, Pause / Restart /
+  Step / Attract, palette, sprite editor, placement; right = the source.
+- The source stays the only truth: the sprite grid rewrites the rows of its `sprite` block (CodeEdit remove / insert
+  inside one complex operation = one undo step), the palette pickers rewrite the `palette` line (colour shown live,
+  text written when the picker closes). Preview recompiles 0.3 s after the last keystroke; on an error the last good
+  program keeps running and the line is highlighted.
+- Preview drawing: a canvas shader decodes the 2 bpp screen bytes (uploaded as a 32×128 R8 texture) with the 4
+  palette colours, so no per-pixel GDScript loop at 30 Hz.
+- **Test**: tests/test_arcade_ui.gd (window): example → 40 frames drawn, pixel / new sprite / palette edits reach the
+  compiled program, compile error keeps the old program and is refused by Apply, Apply / drafts per cabinet / undo,
+  "selected prop → cabinet" on location 24 item 0/0/23, ARM9 install with the game. 31/31 pass; test_dialogue_ui and
+  test_locations_ui still pass. Screenshot checked (layout readable at 1600×900). Not done: playing with the keyboard
+  in the preview by hand, and an emulator run of a game made through the tab (same path as test_arcade, already
+  CONFIRMED).

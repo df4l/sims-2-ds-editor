@@ -39,6 +39,12 @@ The Godot binaries are not committed (see `.gitignore`).
    - **Locations** tab: new locations (ids 34..63) made from an original one (its scene, music, layout, collision):
      name, "behaves like" (fog, ambient sounds, lights), price in the construction menu, delete. Lead a door or a
      warp script to them.
+   - **Arcade** tab: own games for the free cabinets 174 / 175 / 176 (Lunar Lander, Space Gunner, Log Jump), written
+     in the arcade language (Reference… in the tab, docs/formats/arcade_vm.md). Live preview of the game (click the
+     screen to play with the keyboard: arrows, and the melonDS keys for A / B / X / Y), palette and 16×8 sprite
+     editors that rewrite the text, examples, Apply (Ctrl+S) / Remove. "Placed in" lists where the cabinet stands;
+     "Selected prop → cabinet" turns the prop selected in the view (e.g. a Space Armada cabinet) into it. In the
+     game, A presses Stop in the Sims UI: games use B, X, Y and the D-pad.
    - **Own 3D scene** of a new location (Locations tab, "Import .glb / .gltf…"): the glTF scene replaces the
      template's scene models and collision. In Blender: model the place (Y up after export, 1 m = 7 game units
      with the default scale 7; a Sim is about 12.5 units), texture it with the Base Color image of each material
@@ -108,6 +114,7 @@ godot --headless --path . --script res://tests/probe_tex4x4.gd -- sims2.nds out_
 godot --headless --path . --script res://tests/test_armasm.gd -- out_dir   # assembler; then python tools/check_armasm.py out_dir (capstone)
 godot --headless --path . --script res://tests/test_arcade.gd -- sims2.nds out_dir   # own arcade game install + test-card ROM (location 24)
 godot --path . --script res://tests/test_dialogue_ui.gd -- sims2.nds   # Dialogue tab smoke test (needs a window)
+godot --path . --script res://tests/test_arcade_ui.gd -- sims2.nds   # Arcade tab smoke test (needs a window)
 godot --path . --script res://tests/test_locations_ui.gd -- sims2.nds [out_dir/test_room.glb]   # Locations tab (+ scene import)
-godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]]   # UI screenshot
+godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]] [--arcade=example]   # UI screenshot
 ```

@@ -127,7 +127,16 @@ Registers while running: r4 G, r5 pc, r6 operand stack, r7 code, r8 vars, r9 bud
 
 Edit kind `arcade:<prop>` stores JSON `{lang: "script" | "asm", source}` (EditProject.set_arcade_game /
 arcade_game / arcade_games; plain text = an old asm game). `set_arcade_game` compiles once to report
-"line N: message" errors. No editor tab yet.
+"line N: message" errors.
+
+**Arcade tab** (`godot/scripts/ui/arcade_tab.gd`, ArcadeTab): cabinet choice (174 / 175 / 176), source editor
+(highlighting, Ctrl+S = Apply, error line highlighted), live preview = ArcadeVM at 30 Hz drawn by a shader straight
+from the 2 bpp screen bytes (keys from the keyboard while the screen has the focus; sfx ids and the op budget shown,
+pressing A warns that it stops the session), Attract / Restart / Step, palette pickers (rewrite the `palette` line)
+and a 16×8 sprite pixel editor (rewrites the rows of the `sprite` block, one undo step per pixel). Unapplied text is
+kept per cabinet. "Placed in" scans the layouts for prop items of the cabinet; "Selected prop → cabinet" changes the
+prop id of the item selected in the location view. While the tab is shown the item list is hidden and the side
+panel widened. Test: `godot/tests/test_arcade_ui.gd` (31 checks).
 
 ## 5. Verification
 
@@ -150,4 +159,5 @@ arcade_game / arcade_games; plain text = an old asm game). `set_arcade_game` com
 
 - Sound ids worth using for `sfx` (the original games' ids are in their Update functions).
 - L / R / START / SELECT during a session.
-- Editor tab: source editor, live preview (ArcadeVM), sprite / palette editing, cabinet choice.
+- Arcade tab done (§4). Keyboard play in the preview checked only by code (the automated test drives
+  `step(keys)`), not by hand.

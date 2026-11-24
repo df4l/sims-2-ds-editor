@@ -114,7 +114,11 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations, own 3D scenes)
-- 2026-11-24 (latest): own arcade games, step 2 DONE: arcade VM. Language compiler (arcade_script.gd), reference VM
+- 2026-11-24 (latest): Arcade tab DONE (godot/scripts/ui/arcade_tab.gd): cabinet choice, source editor, live preview
+  (ArcadeVM + shader), palette / 16×8 sprite editors rewriting the source, examples, Apply / Remove, "Placed in" +
+  "Selected prop → cabinet". Test: test_arcade_ui (31/31, window). Next: try it by hand (keyboard play), then pick
+  from the backlog (sfx id list for `sfx`, Blender round-trip, Sims / characters…).
+- 2026-11-24: own arcade games, step 2 DONE: arcade VM. Language compiler (arcade_script.gd), reference VM
   (arcade_vm.gd, preview), ARM copy in the extension (arcade_vm_asm.gd, ~3.2 KiB), game block + thunks per game
   (ArcadeExt.install_script_game), docs/formats/arcade_vm.md. CONFIRMED in melonDS: self-test script = reference VM
   byte for byte (screen, palette, 256 vars, with and without keys); Lunar Lander example plays. A stops the session

@@ -59,6 +59,10 @@ var view2d: Control
 var view3d: SubViewportContainer
 var tree: Tree
 var tabs: TabContainer
+var arcade: ArcadeTab
+var main_split: HSplitContainer
+var side_tree: Control
+var _split_saved = null      # split offset before the Arcade tab widened the side panel
 var details: VBoxContainer
 var palette: VBoxContainer
 var script_edit: CodeEdit
@@ -139,6 +143,9 @@ func _debug_shot(out: String, args: PackedStringArray) -> void:
 				dlg_mode_opt.select(dv[1].to_int())
 			_refresh_dialogue(true)
 			_dlg_select(dv[0].to_int())
+		if a.begins_with("--arcade="):
+			tabs.current_tab = arcade.get_index()
+			arcade.load_example(a.trim_prefix("--arcade="))
 		if a.begins_with("--text="):
 			text_search.text = a.trim_prefix("--text=")
 			_refresh_text_list(true)
@@ -305,6 +312,7 @@ func open_rom(path: String) -> void:
 	editor.visible = true
 	get_window().title = "Sims 2 DS Map Editor — %s" % path.get_file()
 	_fill_loc_opt()
+	arcade.reset()
 	open_location(5)
 	if gd.warning != "":
 		show_msg(gd.warning, "Unexpected ROM version")
@@ -412,6 +420,7 @@ func _build_editor() -> void:
 	top.add_child(edited_lbl)
 
 	var split := HSplitContainer.new()
+	main_split = split
 	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	split.split_offset = -460
 	editor.add_child(split)
@@ -443,6 +452,7 @@ func _build_editor() -> void:
 	tree.item_selected.connect(_on_tree_selected)
 	tbox.add_child(tree)
 	side.add_child(tbox)
+	side_tree = tbox
 	tabs = TabContainer.new()
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tabs.custom_minimum_size.y = 360
@@ -453,6 +463,10 @@ func _build_editor() -> void:
 	_build_text_tab()
 	_build_dialogue_tab()
 	locs_box = _scroll_tab("Locations")
+	arcade = ArcadeTab.new()
+	arcade.ed = self
+	tabs.add_child(arcade)
+	tabs.tab_changed.connect(_on_tab_changed)
 
 	var bottom := MarginContainer.new()
 	bottom.add_theme_constant_override("margin_left", 8)
@@ -1065,6 +1079,20 @@ func _dlg_add_new_string_line() -> void:
 		status("New string 0x%04X added to every language (select a conversation to use it)" % sid)
 
 
+## The Arcade tab needs room: it hides the item list and widens the side panel while it is shown.
+func _on_tab_changed(i: int) -> void:
+	var on := tabs.get_tab_control(i) == arcade
+	side_tree.visible = not on
+	if on and _split_saved == null:
+		_split_saved = main_split.split_offset
+		main_split.split_offset = mini(main_split.split_offset, -int(main_split.size.x * 0.62))
+	elif not on and _split_saved != null:
+		main_split.split_offset = _split_saved
+		_split_saved = null
+	if on:
+		arcade.refresh()
+
+
 func _scroll_tab(title: String) -> VBoxContainer:
 	var sc := ScrollContainer.new()
 	sc.name = title
@@ -1214,6 +1242,7 @@ func _rebuild_view(refit: bool) -> void:
 	_refresh_text_list()
 	_refresh_dialogue()
 	_render_locations()
+	arcade.refresh()
 	if _find(sel) == null:
 		sel = ""
 	if mode == "items":
