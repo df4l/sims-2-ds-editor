@@ -42,10 +42,12 @@ func _init() -> void:
 	check(gd.prop_game_name(174).contains("Lunar"), "174 = " + gd.prop_game_name(174))
 
 	# --- project ------------------------------------------------------------------------------------------------
-	check(pr.set_arcade_game(173, ArcadeExt.TEST_CARD) != "", "cabinet 173 refused (has a game)")
-	check(pr.set_arcade_game(174, "init:\nupdate:\n\tfoo r0\nfree:\n") != "", "assembly error reported")
-	check(pr.set_arcade_game(174, "init:\nupdate:\n") != "", "missing free label reported")
-	check(pr.set_arcade_game(174, ArcadeExt.TEST_CARD) == "", "test card on 174")
+	check(pr.set_arcade_game(173, ArcadeExt.TEST_CARD, "asm") != "", "cabinet 173 refused (has a game)")
+	check(pr.set_arcade_game(174, "init:\nupdate:\n\tfoo r0\nfree:\n", "asm") != "", "assembly error reported")
+	check(pr.set_arcade_game(174, "init:\nupdate:\n", "asm") != "", "missing free label reported")
+	check(pr.set_arcade_game(174, "func frame\nfoo\nend\n").begins_with("line 2:"), "script error reported with its line")
+	check(pr.set_arcade_game(174, ArcadeExt.TEST_CARD, "asm") == "", "test card on 174")
+	check(pr.arcade_game(174).lang == "asm", "stored as asm")
 	check(pr.arcade_games().size() == 1 and pr.has_arm9_edits(), "listed, ARM9 edit")
 	# moved into the view of the start camera (Sim at (28, 0, 40) looking to -z), screen towards the camera
 	var ee := pr.edit_item(24, 0, 0, 23, 28, null, 22, 180, null, {"prop": 174})
@@ -86,5 +88,120 @@ func _init() -> void:
 	var m2 := Arm9Mod.new(gd2.a9)
 	check(m2.read_u32(ArcadeExt.FREE_PROPS[174]) == (ArcadeExt.MOV_R3_0 | 10), "exported ARM9 has the 174 patch")
 	check(pr.set_arcade_game(174, "") == "" and pr.arcade_games().is_empty(), "game removed")
+
+	# --- script games (VM) ----------------------------------------------------------------------------------------
+	var vm0 := ArcadeExt.install_vm(Arm9Mod.new(gd.a9))
+	check(not vm0.has("error"), "VM assembles: %s" % vm0.get("error", "%d bytes" % vm0.get("size", 0)))
+	if not vm0.has("error"):
+		var mvm := Arm9Mod.new(gd.a9)
+		var rvm := ArcadeExt.install_vm(mvm)
+		# the op table matches the opcodes of the reference VM
+		var labs: Dictionary = rvm.labels
+		var consts: Dictionary = (ArcadeVM as Script).get_script_constant_map()
+		var named := {}
+		for n in ["RET", "PUSHB", "PUSHH", "PUSHW", "LOAD", "STORE", "LOADX", "STOREX", "JMP", "JZ", "JNZ", "CALL",
+				"POP", "DUP", "ADD", "SUB", "MUL", "DIV", "MOD", "AND", "OR", "XOR", "SHL", "SHR", "NEG", "NOT", "BNOT",
+				"EQ", "NE", "LT", "LE", "GT", "GE", "CLS", "SPR", "RECT", "PIX", "TEXT", "NUM", "SFX", "PAL", "HELD",
+				"PRESSED", "RND", "ABS", "MIN", "MAX", "HIT", "PEEK"]:
+			named[consts[n]] = "op_" + n.to_lower()
+		var bad_ops := []
+		for i in ArcadeVM.NOPS:
+			var want: String = named.get(i, "vm_stop")
+			if mvm.read_u32(labs.vm_optab + 4 * i) != labs.get(want, -1):
+				bad_ops.append("0x%02X" % i)
+		check(bad_ops.is_empty(), "op table = opcodes of ArcadeVM %s" % str(bad_ops))
+		f = FileAccess.open(out_dir.path_join("arcade_vm.bin"), FileAccess.WRITE)
+		f.store_buffer(mvm.read(rvm.addr, rvm.size))
+		f.close()
+		f = FileAccess.open(out_dir.path_join("arcade_vm.txt"), FileAccess.WRITE)
+		f.store_string("base 0x%08X\n" % rvm.addr)
+		for l in rvm.labels:
+			f.store_string("%s 0x%08X\n" % [l, rvm.labels[l]])
+		f.close()
+	for rom in [["arcade_self.nds", SELFTEST], ["arcade_lander.nds", ArcadeExamples.LANDER]]:
+		var es := pr.set_arcade_game(174, rom[1])
+		check(es == "", "script game on 174 (%s) %s" % [rom[0], es])
+		var ms := pr.arm9_mod()
+		check(ms.error == "", "install: " + ms.error)
+		var ee2 := pr.export_rom(out_dir.path_join(rom[0]), [24, 0])
+		check(ee2 == "", "export " + rom[0] + " " + ee2)
+		# where the game block is (for the emulator comparison)
+		var t0 := 0x7FFFFFFF
+		for at in ArcadeExt.TABLE_LITERALS:
+			t0 = mini(t0, ms.read_u32(at))
+		var thunk := ms.read_u32(t0 + 120)
+		var gblk := ms.read_u32(thunk + 24)  # literal pool after the 6 thunk instructions
+		check(ms.read_u32(gblk + 0) > gblk and ms.read(gblk + 0xC, 2).decode_u16(0) == ArcadeScript.compile(rom[1]).nsprites,
+			"game block 0x%08X" % gblk)
+		f = FileAccess.open(out_dir.path_join(rom[0].get_basename() + ".txt"), FileAccess.WRITE)
+		f.store_string("block 0x%08X\ninit 0x%08X\n" % [gblk, thunk])
+		f.close()
+	f = FileAccess.open(out_dir.path_join("selftest.txt"), FileAccess.WRITE)
+	f.store_string(SELFTEST)
+	f.close()
 	print("%d failure(s)" % fails)
 	quit(1 if fails else 0)
+
+
+## Deterministic program using every opcode (no rnd, no sfx): the ARM VM in the emulator must draw exactly what
+## ArcadeVM draws for the same tick (tests/arcade_vm_ref.gd).
+const SELFTEST := """palette #000000, #FF0000, #00FF00, #FFFFFF
+sprite a
+3.......2......1
+.33....22.....11
+..333..2.2...1.1
+...3333...2.1..1
+1111.....2.2...3
+.2.2.....2..2..3
+..3.3...2....2.3
+...1.1.2......23
+end
+var i, j, k, acc, arr[20], t2
+
+func down
+  k -= 1
+  acc += k * k
+  if k > 0
+    down
+  end
+end
+
+func frame
+  cls tick & 3
+  acc = 0
+  for i = -20 to 20 step 3
+    arr[(i + 20) / 3] = i * tick - 7
+    acc += (i * 1000 + tick) / (i - 2) + (tick * 37) % (i + 25) - (i << (tick & 7)) + (-i >> 2)
+    acc += tick / (i - i) + tick % (i - i) + (-tick * 7) / 4 + (-tick * 7) % 4
+  end
+  acc ^= ~tick
+  acc += tick * 123456789 * 99
+  k = 18
+  down
+  num acc, 2, 2, 3
+  num -tick * 12345, 2, 10, 2
+  num arr[tick % 14], 2, 18, 1, 2
+  num arr[-1] + arr[25], 64, 18, 1
+  text "HELLO, world! 0123456789\\n?!:-+=()[]_#$%&'*/<>@^", 2, 30, 3
+  text "big", 60, 50, 2, 3
+  for j = 0 to 5
+    spr a, (tick * 3 + j * 23) % 150 - 16, 60 + j * 9, j & 3
+  end
+  spr 1, 0, 0
+  spr -1, 0, 0
+  rect tick % 140 - 10, 100, 20, 10, 1
+  rect -3, -3, 8, 8, 2
+  rect 120, 120, 50, 50, 3
+  pix tick % 128, 127, 3
+  t2 = peek(tick % 128, 127) * 100 + peek(200, 5) + hit(tick, 0, 10, 10, 50, 0, 5, 5) * 10
+  num t2, 90, 2, 1
+  num min(tick, 50) + max(-tick, -30) + abs(-tick), 90, 10, 2
+  num held(0xFFF) + pressed(0) * 1000, 90, 18, 3
+  if tick % 2 == 0 and tick % 3 == 0 or tick % 7 == 0
+    rect 120, 0, 8, 8, 2
+  end
+  if not (tick & 4)
+    pal 2, tick * 1000
+  end
+end
+"""

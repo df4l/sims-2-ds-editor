@@ -33,7 +33,9 @@ const SYMS := {
 }
 
 
-## Install `games` = [{prop: 174..176, source: String, name: String}]. "" or an error.
+## Install `games` = [{prop: 174..176, lang: "script" | "asm", source: String, name: String}]. "" or an error.
+## Script games share one copy of the VM (VM_ASM); each gets a game block (header, variables, sprites, bytecode) and
+## three thunks.
 static func install(m: Arm9Mod, games: Array) -> String:
 	if games.is_empty():
 		return ""
@@ -47,6 +49,7 @@ static func install(m: Arm9Mod, games: Array) -> String:
 	var tab := m.read(TABLE, 12 * OLD_TYPES)
 	tab.resize(12 * (OLD_TYPES + games.size()))
 	var used := {}
+	var vm := {}
 	for k in games.size():
 		var g: Dictionary = games[k]
 		var prop: int = g.prop
@@ -58,7 +61,15 @@ static func install(m: Arm9Mod, games: Array) -> String:
 		var site: int = FREE_PROPS[prop]
 		if m.read_u32(site) != MOV_R3_0:
 			return "arcade: the word at 0x%08X is 0x%08X, not mov r3,#0: unsupported game version" % [site, m.read_u32(site)]
-		var r := assemble_game(m, g.source)
+		var r := {}
+		if g.get("lang", "asm") == "script":
+			if vm.is_empty():
+				vm = install_vm(m)
+				if vm.has("error"):
+					return "arcade VM: " + vm.error
+			r = install_script_game(m, vm, g.source)
+		else:
+			r = assemble_game(m, g.source)
 		if r.has("error"):
 			return "arcade game '%s': %s" % [g.get("name", str(prop)), r.error]
 		var t := OLD_TYPES + k
@@ -78,25 +89,119 @@ static func install(m: Arm9Mod, games: Array) -> String:
 	return ""
 
 
-## Assemble a game into the extension: {init, update, free, addr, size} or {error}.
-static func assemble_game(m: Arm9Mod, src: String) -> Dictionary:
+## Assemble ArmAsm source in the extension: {addr, size, labels} or {error}.
+static func assemble_at(m: Arm9Mod, src: String, syms: Dictionary) -> Dictionary:
 	var asm := ArmAsm.new()
-	var probe := asm.assemble(src, Arm9Mod.EXT_BASE, SYMS)
+	var probe := asm.assemble(src, Arm9Mod.EXT_BASE, syms)
 	if asm.error != "":
 		return {"error": asm.error}
 	if probe.is_empty():
 		return {"error": "empty program"}
-	for l in ["init", "update", "free"]:
-		if not asm.labels.has(l):
-			return {"error": "label '%s' missing" % l}
 	var a := m.alloc(probe.size())
 	if a == 0:
 		return {"error": m.error}
-	var bin := asm.assemble(src, a, SYMS)
-	if bin.size() != probe.size():
+	var bin := asm.assemble(src, a, syms)
+	if asm.error != "" or bin.size() != probe.size():
 		return {"error": "internal: size changed with the address (%s)" % asm.error}
 	m.write(a, bin)
-	return {"init": asm.labels.init, "update": asm.labels.update, "free": asm.labels.free, "addr": a, "size": bin.size()}
+	return {"addr": a, "size": bin.size(), "labels": asm.labels}
+
+
+## Assemble a game into the extension: {init, update, free, addr, size} or {error}.
+static func assemble_game(m: Arm9Mod, src: String) -> Dictionary:
+	var asm := ArmAsm.new()
+	asm.assemble(src, Arm9Mod.EXT_BASE, SYMS)
+	if asm.error == "":
+		for l in ["init", "update", "free"]:
+			if not asm.labels.has(l):
+				return {"error": "label '%s' missing" % l}
+	var r := assemble_at(m, src, SYMS)
+	if r.has("error"):
+		return r
+	return {"init": r.labels.init, "update": r.labels.update, "free": r.labels.free, "addr": r.addr, "size": r.size}
+
+
+## The VM, once per ROM: {vm_init, vm_update, vm_free, addr, size} or {error}.
+static func install_vm(m: Arm9Mod) -> Dictionary:
+	var r := assemble_at(m, vm_source(), vm_syms())
+	if r.has("error"):
+		return r
+	return {"vm_init": r.labels.vm_init, "vm_update": r.labels.vm_update, "vm_free": r.labels.vm_free,
+		"addr": r.addr, "size": r.size, "labels": r.labels}
+
+
+static func vm_syms() -> Dictionary:
+	var s := SYMS.duplicate()
+	s["BUDGET"] = ArcadeVM.BUDGET
+	s["NOPS"] = ArcadeVM.NOPS
+	return s
+
+
+static func vm_source() -> String:
+	var f := ArcadeVM.font()
+	var lines := PackedStringArray()
+	for i in range(0, 64, 8):
+		var row := PackedStringArray()
+		for k in 8:
+			row.append("0x%04X" % f[i + k])
+		lines.append("\t.hword " + ", ".join(row))
+	return ArcadeVmAsm.SOURCE.replace("\t; FONT\n", "\n".join(lines) + "\n")
+
+
+## Game block of a compiled program at address `g` (layout: VM_ASM header comment).
+static func game_block(prog: Dictionary, g: int) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(BLOCK_VARS + 4 * ArcadeVM.NVARS)
+	var spr := g + b.size()
+	b.append_array(prog.sprites)
+	while b.size() % 4:
+		b.append(0)
+	var code := g + b.size()
+	b.append_array(prog.code)
+	b.encode_u32(0x00, code)
+	b.encode_u32(0x04, spr)
+	b.encode_u16(0x08, prog.init)
+	b.encode_u16(0x0A, prog.frame)
+	b.encode_u16(0x0C, prog.nsprites)
+	for i in 4:
+		b.encode_u16(0x10 + 2 * i, prog.palette[i])
+		b.encode_u16(0x18 + 2 * i, prog.palette[i])
+	for i in ArcadeVM.NVARS:
+		b.encode_s32(BLOCK_VARS + 4 * i, prog.vars[i])
+	return b
+
+
+## A script game: compile, game block, thunks. {init, update, free, block, size} or {error}.
+static func install_script_game(m: Arm9Mod, vm: Dictionary, src: String) -> Dictionary:
+	var prog := ArcadeScript.compile(src)
+	if prog.has("error"):
+		return {"error": "line %d: %s" % [prog.line, prog.error]}
+	var size := game_block(prog, 0).size()
+	var g := m.alloc(size)
+	if g == 0:
+		return {"error": m.error}
+	m.write(g, game_block(prog, g))
+	var syms := {"G": g, "VM_INIT": vm.vm_init, "VM_UPDATE": vm.vm_update, "VM_FREE": vm.vm_free}
+	var r := assemble_at(m, THUNKS, syms)
+	if r.has("error"):
+		return r
+	return {"init": r.labels.init, "update": r.labels.update, "free": r.labels.free, "block": g, "size": size}
+
+
+const BLOCK_VARS := 0x30
+
+const THUNKS := """
+init:
+	ldr r2, =G
+	b VM_INIT
+update:
+	ldr r0, =G
+	b VM_UPDATE
+free:
+	ldr r0, =G
+	b VM_FREE
+	.pool
+"""
 
 
 ## Test card ("mire"): animated colour checker, white border, colours inverted while a key is held.

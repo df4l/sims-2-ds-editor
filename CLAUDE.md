@@ -114,7 +114,13 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations, own 3D scenes)
-- 2026-11-23 (latest): own arcade games, step 1 DONE. ArmAsm (godot/scripts/core/arm_asm.gd, ARM assembler in GDScript,
+- 2026-11-24 (latest): own arcade games, step 2 DONE: arcade VM. Language compiler (arcade_script.gd), reference VM
+  (arcade_vm.gd, preview), ARM copy in the extension (arcade_vm_asm.gd, ~3.2 KiB), game block + thunks per game
+  (ArcadeExt.install_script_game), docs/formats/arcade_vm.md. CONFIRMED in melonDS: self-test script = reference VM
+  byte for byte (screen, palette, 256 vars, with and without keys); Lunar Lander example plays. A stops the session
+  (Sims UI) → games use B/X/Y/D-pad. Tests: test_arcade_vm (no ROM), test_arcade. Next: Arcade tab in the editor
+  (source editor, live preview, sprite / palette editing, cabinet choice).
+- 2026-11-23: own arcade games, step 1 DONE. ArmAsm (godot/scripts/core/arm_asm.gd, ARM assembler in GDScript,
   57/57 encodings = capstone) + ArcadeExt (arcade_ext.gd: table moved to the extension, cabinets 174/175/176 get own
   types 10..; edit kind `arcade:<prop>`). Test card on 174 CONFIRMED in melonDS (build/arcade_test/card/: shown on the
   cabinet, scrolls, input inverts it byte-exact, Stop frees). Tests: test_armasm (+ tools/check_armasm.py), test_arcade.

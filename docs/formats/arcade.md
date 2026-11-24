@@ -124,6 +124,12 @@ Emulator checks (`godot/tests/test_arcade.gd`: test card on 174, location 24 cab
 - Note: the cabinet of location 24 stands against the street wall; with the Sim teleported next to it the gameplay
   camera ended up inside the wall (first session). Not a problem of the game code.
 
+### 6b. Script games (arcade VM) — CONFIRMED (emulator 2026-11-24, `build/arcade_test/vm/`)
+
+Games can also be written in the arcade language and run by a bytecode VM installed in the extension: see
+[arcade_vm.md](arcade_vm.md). While a session runs, **A presses the bottom-screen Stop** (Sims UI): games must use
+B / X / Y / D-pad.
+
 ## 7. Open points
 - Rules, sprites and high-score slots of games 1–8; per-game sound effects.
 - Which cabinet model / texture name goes with which prop (13 props, Arcade01…); whether every cabinet's screen

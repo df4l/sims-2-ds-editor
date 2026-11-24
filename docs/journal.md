@@ -1221,3 +1221,23 @@ Goal (user: option 2 = a VM in the ARM9 extension, start with a test card): vali
 - Pitfall: a read at 0x0215404C instead of 0x0215304C looked like "update never runs" — compute addresses with
   Python (memory note).
 - Next: the VM (bytecode + interpreter in ArmAsm, same interpreter in GDScript for a preview in the editor).
+
+## 2026-11-24 — Arcade VM: script games run in the game
+
+Goal (plan "option 2"): games written in a small language, compiled to bytecode, one VM in ARM in the extension and
+the same VM in GDScript for the preview (docs/formats/arcade_vm.md).
+- **Written** (session 2026-11-23, finished today): ArcadeScript (compiler), ArcadeVM (reference), ArcadeVmAsm (ARM
+  copy, ≈ 3.2 KiB), ArcadeExt.install_vm / install_script_game (game block + thunks), examples (Lunar Lander, card).
+  Project edit `arcade:<prop>` now JSON {lang, source}.
+- **Tests**: test_arcade_vm.gd all pass (folding = runtime for every operator, limits, drawing, errors, examples).
+  test_arcade.gd hung on a missing `Arm9Mod.read_u16` (headless Godot does not quit on a script error: run it with
+  output to a file, not piped into tail) → fixed, all pass; the ARM op table matches ArcadeVM opcode by opcode.
+- **Hypothesis**: the ARM VM draws exactly what ArcadeVM draws. **Test**: arcade_self.nds (self-test script using every
+  opcode except RND / SFX), Insert Coin at location 24, dump the game block (0x02153B58) and the screen buffer, compare
+  with tests/arcade_vm_ref.gd for the same tick and keys. Tick 105, no key: screen 4 096 / 4 096 bytes, palette, 256
+  vars identical. Tick 113, A + LEFT held: identical. **CONFIRMED.** A first dump at "tick 112" had the vars of tick
+  113: the dump landed inside an Update (the game logic spans frames) → re-dump one frame later.
+- **Lunar Lander** (arcade_lander.nds): falls, crashes, "CRASHED!", restarts, thrust flame. Sessions ended by
+  themselves: tested key by key → **A stops the session** (the Sims UI takes A for the selected bottom-screen action,
+  "Stop"); LEFT, RIGHT, UP, B, X, Y do not. Example switched from A to B. Documented in arcade_vm.md §1.
+- Next: the Arcade tab in the editor (source, live preview, sprites / palette, cabinet choice).

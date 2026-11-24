@@ -1377,26 +1377,50 @@ func arm9_mod() -> Arm9Mod:
 
 # --- own arcade games (ArcadeExt, docs/formats/arcade.md) ------------------------------------------------------------
 
-## [{prop, source, name}] of the cabinets that run an own game, by prop id.
+## [{prop, lang, source, name}] of the cabinets that run an own game, by prop id. lang: "script" (arcade language,
+## ArcadeScript) or "asm" (ArmAsm with init / update / free). Stored as JSON {lang, source}.
 func arcade_games() -> Array:
 	var out := []
 	for prop in ArcadeExt.FREE_PROPS:
-		if is_edited("arcade", prop):
-			out.append({"prop": prop, "source": edits[key("arcade", prop)].get_string_from_utf8(),
-				"name": gd.prop_game_name(prop)})
+		var g := arcade_game(prop)
+		if not g.is_empty():
+			g["prop"] = prop
+			g["name"] = gd.prop_game_name(prop)
+			out.append(g)
 	return out
 
 
-## Put a game (ArmAsm source with init / update / free) on cabinet 174, 175 or 176; "" source = back to the original.
-## The source is assembled once here to report errors early.
-func set_arcade_game(prop: int, source: String) -> String:
+## {lang, source} on cabinet `prop`, or {} if it has none.
+func arcade_game(prop: int) -> Dictionary:
+	if not is_edited("arcade", prop):
+		return {}
+	var s: String = edits[key("arcade", prop)].get_string_from_utf8()
+	var d = JSON.parse_string(s) if s.begins_with("{") else null
+	if d is Dictionary:
+		return {"lang": str(d.get("lang", "script")), "source": str(d.get("source", ""))}
+	return {"lang": "asm", "source": s}
+
+
+## Put a game on cabinet 174, 175 or 176; "" source = back to the original. The source is compiled / assembled once
+## here to report errors early ("line N: message").
+func set_arcade_game(prop: int, source: String, lang := "script") -> String:
 	if not ArcadeExt.FREE_PROPS.has(prop):
 		return "cabinet %d is not a free slot (174, 175, 176)" % prop
 	if source != "":
-		var r := ArcadeExt.assemble_game(Arm9Mod.new(gd.a9), source)
-		if r.has("error"):
-			return r.error
-	_store("arcade", prop, source.to_utf8_buffer())
+		if lang == "script":
+			var p := ArcadeScript.compile(source)
+			if p.has("error"):
+				return "line %d: %s" % [p.line, p.error]
+		elif lang == "asm":
+			var r := ArcadeExt.assemble_game(Arm9Mod.new(gd.a9), source)
+			if r.has("error"):
+				return r.error
+		else:
+			return "unknown language " + lang
+	if source == "":
+		_store("arcade", prop, PackedByteArray())
+	else:
+		_store("arcade", prop, JSON.stringify({"lang": lang, "source": source}).to_utf8_buffer())
 	return ""
 
 
