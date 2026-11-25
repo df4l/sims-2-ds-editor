@@ -50,7 +50,7 @@ Statements: `name = expr`, `name op= expr` (`+= -= *= /= %= &= |= ^=`), `a[i] = 
 | `text "...", x, y, c [, size]` | 3×5 font, 4·size pixels per character, `\n` = new line (x back to the start, +6·size) |
 | `num v, x, y, c [, size]` | a number in decimal |
 | `pal i, colour` | change palette entry i (uploaded at the end of the frame) |
-| `sfx id` | play a game sound (id of the game's sound player, e.g. 0x15C) |
+| `sfx id` | play a game sound (id of the game's sound player; named ids `SFX_…` in §2b) |
 
 Expressions, lowest to highest precedence: `or`, `and` (both short-circuit, result 0/1), `not`, `| ^ &`,
 comparisons `== != < <= > >=`, `<< >>` (count & 31, `>>` arithmetic), `+ -`, `* / %` (truncating, `x / 0 = 0`,
@@ -106,6 +106,40 @@ declarations, CALL init if present, RET) and the **frame entry** (the `frame` fu
 Screen: 128×128, 2 bpp, 32 bytes per row, pixel x in bits `(x & 3) * 2` of byte `y * 32 + x / 4` (the cabinet's
 screen texture, arcade.md §4).
 
+## 2b. Sounds (`sfx`)
+
+`sfx id` calls the game's sound player `Snd_PlaySoundEvent` 0x020D5680 (id, cabinet position = actor +0x78).
+**Confirmed (code)**: id indexes 0x02136CB8 = 672 × {s16 count, u16 first}; a random variant (count is 1 for every
+arcade id) is taken from 0x02137738 = {u16 sound, u16 param}. Sound data is in `data/SoundData.rom` (custom
+container, not decoded), so the meaning below comes from where the original cabinets call each id.
+
+| Name (built-in constant) | id | sound | original use |
+|---|---|---|---|
+| SFX_BOUNCE | 0x1F | 411 | Bustin' Out ball on a wall, Space Armada cannon hit, Copter crash |
+| SFX_LOST | 0x20 | 412 | Bustin' Out ball lost, Copter reset |
+| SFX_BLIP | 0x21 | 413 | Bustin' Out paddle on the edge, Copter pickup |
+| (loop) | 0x22 | 414 | Copter cabinet ambience, started by Arc_ControllerCtor |
+| SFX_COPTER | 0x23 | 415 | Copter (delivery / landing, assumed) |
+| SFX_CATCH | 0x24 | 416 | Pie Factory pie caught |
+| SFX_MISS | 0x25 | 417 | Pie Factory pie missed |
+| SFX_LAUNCH | 0x26 | 418 | Pie Factory new pie |
+| (loop) | 0x2E | 419 | Sisyphus cabinet ambience |
+| SFX_PADDLE | 0x2A | 420 | Bustin' Out paddle hit, Space Armada march step |
+| SFX_ENEMY_SHOT | 0x2B | 421 | Space Armada invader fires |
+| SFX_EXPLODE | 0x2C | 422 | Space Armada invader destroyed |
+| SFX_SHOOT | 0x2D | 423 | Space Armada cannon fires |
+| SFX_LASER | 0x27 | 424 | X-Raider fires |
+| SFX_BREAK | 0x28 | 425 | Bustin' Out brick, X-Raider enemy hit |
+| (loop) | 0x29 | 426 | X-Raider cabinet ambience |
+| SFX_EXTRA1 / SFX_EXTRA2 | 0x2F / 0x30 | 427 / 428 | **no caller**: arcade block, maybe for the unfinished games 174–176 |
+| SFX_COIN | 0x15C | 676 | Insert Coin (Arc_ControllerOnEvent) |
+| SFX_CLACK | 0x264 | 455 | billiard ball contact |
+
+Rules (both VMs): ids outside 0..671 (past the table: would read garbage) and the 3 looping ambiences (the
+controller only stops the one it started in its handle +0x9C, a game-started loop would never stop) are
+**ignored**; with a constant argument the compiler refuses them. Any other id 0..671 is passed through (not
+tested: some, like the location ambiences 0x0B / 0x0D / 0x0E, may loop).
+
 ## 3. In the ROM
 
 `ArcadeExt.install` (export): the VM is assembled once into the ARM9 extension (≈ 3.2 KiB: code, op table, font,
@@ -154,10 +188,14 @@ panel widened. Test: `godot/tests/test_arcade_ui.gd` (31 checks).
   one frame later.
 - `arcade_lander.nds`: the lander falls, crashes ("CRASHED!"), restarts, thrust flame shown (lander_play.png). Found
   there: A stops the session (§1). RND used (pad position); SFX not checked by ear.
+- `arcade_sfx.nds` (`build/arcade_test/sfx/`, 2026-11-25, test_arcade SFXTEST): every named sound in turn (one per
+  30 ticks) and each frame 3 ignored ids (0x29, 0x29 + 700, −0x29). Insert Coin at location 24: after 738 ticks
+  n = 25 (all 17 names played, then 8 more), shown id = the expected one, no crash after ~2 200 ignored calls
+  (sfx_play.png). CONFIRMED (execution; the sounds themselves not heard).
 
 ## 6. Open points
 
-- Sound ids worth using for `sfx` (the original games' ids are in their Update functions).
+- What 0x2F / 0x30 sound like (no caller), and which non-arcade ids loop. Sounds not checked by ear (no audio capture).
 - L / R / START / SELECT during a session.
 - Arcade tab done (§4). Keyboard play in the preview checked only by code (the automated test drives
   `step(keys)`), not by hand.

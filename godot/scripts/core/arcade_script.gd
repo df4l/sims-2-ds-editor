@@ -62,6 +62,8 @@ func _compile(src: String) -> Dictionary:
 	_names = {"attract": {"kind": "var", "slot": V.V_ATTRACT}, "tick": {"kind": "var", "slot": V.V_TICK}}
 	for k in V.KEYS:
 		_names[k] = {"kind": "const", "value": V.KEYS[k]}
+	for k in V.SOUNDS:
+		_names[k] = {"kind": "const", "value": V.SOUNDS[k]}
 	var lines := src.replace("\r", "").split("\n")
 	_sprite_pass(lines)
 	if error == "":
@@ -579,7 +581,12 @@ func _statement():
 				var c: Array = COMMANDS[w]
 				var args := 0
 				while error == "":
-					_gen(_expr())
+					var e = _expr()
+					if error == "" and w == "sfx" and args == 0 and e[0] == "num" and not V.sfx_ok(e[1]):
+						if V.SFX_LOOPS.has(e[1]):
+							return _fail("sfx 0x%X is a looping cabinet sound: it would never stop" % e[1], t[2])
+						return _fail("sfx %d: the game has sound ids 0..%d" % [e[1], V.SFX_COUNT - 1], t[2])
+					_gen(e)
 					args += 1
 					if not _accept("op", ","):
 						break

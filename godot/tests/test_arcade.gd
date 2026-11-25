@@ -118,7 +118,7 @@ func _init() -> void:
 		for l in rvm.labels:
 			f.store_string("%s 0x%08X\n" % [l, rvm.labels[l]])
 		f.close()
-	for rom in [["arcade_self.nds", SELFTEST], ["arcade_lander.nds", ArcadeExamples.LANDER]]:
+	for rom in [["arcade_self.nds", SELFTEST], ["arcade_lander.nds", ArcadeExamples.LANDER], ["arcade_sfx.nds", SFXTEST]]:
 		var es := pr.set_arcade_game(174, rom[1])
 		check(es == "", "script game on 174 (%s) %s" % [rom[0], es])
 		var ms := pr.arm9_mod()
@@ -203,5 +203,51 @@ func frame
   if not (tick & 4)
     pal 2, tick * 1000
   end
+end
+"""
+
+
+## Every named sound in turn (one every 30 ticks) and, every frame, ids both VMs must ignore (past the table,
+## negative, a looping ambience): the emulator run checks that the ARM VM keeps going (tick, n) without a crash.
+const SFXTEST := """palette #000000, #555555, #AAAAAA, #FFFFFF
+var ids[17]
+var n, bad
+func init
+  ids[0] = SFX_BOUNCE
+  ids[1] = SFX_LOST
+  ids[2] = SFX_BLIP
+  ids[3] = SFX_COPTER
+  ids[4] = SFX_CATCH
+  ids[5] = SFX_MISS
+  ids[6] = SFX_LAUNCH
+  ids[7] = SFX_LASER
+  ids[8] = SFX_BREAK
+  ids[9] = SFX_PADDLE
+  ids[10] = SFX_ENEMY_SHOT
+  ids[11] = SFX_EXPLODE
+  ids[12] = SFX_SHOOT
+  ids[13] = SFX_EXTRA1
+  ids[14] = SFX_EXTRA2
+  ids[15] = SFX_COIN
+  ids[16] = SFX_CLACK
+  n = 0
+end
+func frame
+  cls 0
+  bad = 0x29
+  sfx bad
+  sfx bad + 700
+  sfx -bad
+  if attract
+    return
+  end
+  if tick % 30 == 0
+    sfx ids[n % 17]
+    n += 1
+  end
+  text "SFX", 4, 4, 3
+  num n, 4, 14, 2
+  num ids[(n + 16) % 17], 4, 24, 1
+  num tick, 4, 34, 1
 end
 """

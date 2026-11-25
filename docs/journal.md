@@ -1259,3 +1259,17 @@ the same VM in GDScript for the preview (docs/formats/arcade_vm.md).
   test_locations_ui still pass. Screenshot checked (layout readable at 1600×900). Not done: playing with the keyboard
   in the preview by hand, and an emulator run of a game made through the tab (same path as test_arcade, already
   CONFIRMED).
+
+## 2026-11-25 — Arcade sounds: named `sfx` ids
+
+- **Code**: the 68 callers of the sound player 0x020D5680 (now `Snd_PlaySoundEvent`) listed by a Ghidra script; the
+  arcade ones (Space Armada, Bustin' Out, Pie Factory, Copter, X-Raider, Billiards) read in their helper functions
+  (renamed, docs/ghidra.md). Table 0x02136CB8 = 672 × {count, first} → 0x02137738 {sound, param}: the cabinets use
+  the contiguous block 0x1F..0x30 = sounds 411..428; 0x2F / 0x30 have no caller (maybe meant for 174–176).
+  0x22 / 0x29 / 0x2E are the looping cabinet ambiences started in Arc_ControllerCtor and stopped in its dtor.
+- **Editor**: built-in constants `SFX_…` (ArcadeVM.SOUNDS, highlighted, listed in the tab help, preview shows
+  names); compiler refuses a constant id outside 0..671 or a looping one; both VMs ignore them at run time (ARM: 6
+  instructions in op_sfx, checked with capstone). Lunar Lander example plays SFX_CATCH / SFX_EXPLODE.
+- **Tests**: test_arcade_vm (+ sfx names / ignored ids / 3 errors), test_arcade, test_arcade_ui: 0 failures.
+- **Emulator** (build/arcade_test/sfx/arcade_sfx.nds): all 17 names played in order, ~2 200 ignored calls, no crash.
+  CONFIRMED as execution. Not heard: MelonMCP has no audio capture.

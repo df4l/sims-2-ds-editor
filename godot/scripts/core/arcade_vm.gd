@@ -23,6 +23,22 @@ enum {
 const KEYS := {"A": 0x1, "B": 0x2, "SELECT": 0x4, "START": 0x8, "RIGHT": 0x10, "LEFT": 0x20, "UP": 0x40,
 	"DOWN": 0x80, "R": 0x100, "L": 0x200, "X": 0x400, "Y": 0x800}
 
+## Sound ids of the game's sound player 0x020D5680 (table 0x02136CB8: 672 ids). The arcade games use the block
+## 0x1F..0x30 (docs/formats/arcade_vm.md §2b). Names = built-in constants of the language.
+const SFX_COUNT := 672
+const SFX_LOOPS := [0x22, 0x29, 0x2E]   # cabinet ambience loops (X-Raider, Copter, Sisyphus): never stopped by a game
+const SOUNDS := {
+	"SFX_BOUNCE": 0x1F, "SFX_LOST": 0x20, "SFX_BLIP": 0x21, "SFX_COPTER": 0x23, "SFX_CATCH": 0x24,
+	"SFX_MISS": 0x25, "SFX_LAUNCH": 0x26, "SFX_LASER": 0x27, "SFX_BREAK": 0x28, "SFX_PADDLE": 0x2A,
+	"SFX_ENEMY_SHOT": 0x2B, "SFX_EXPLODE": 0x2C, "SFX_SHOOT": 0x2D, "SFX_EXTRA1": 0x2F, "SFX_EXTRA2": 0x30,
+	"SFX_COIN": 0x15C, "SFX_CLACK": 0x264}
+
+
+## True when `sfx id` plays something (other ids are ignored by both VMs).
+static func sfx_ok(id: int) -> bool:
+	return id >= 0 and id < SFX_COUNT and not SFX_LOOPS.has(id)
+
+
 ## 3×5 font for ASCII 32..95 (lower case is drawn as upper case). Bit (row * 3 + col), col 0 = left.
 const FONT_ROWS := {
 	"0": ["###", "#.#", "#.#", "#.#", "###"], "1": [".#.", "##.", ".#.", ".#.", "###"],
@@ -304,7 +320,9 @@ func _run(entry: int) -> void:
 				_set_scale(a[4])
 				_text(a[1], a[2], _digits(a[0]), a[3] & 3)
 			SFX:
-				sounds.append(_pop(st))
+				var id: int = _pop(st)
+				if sfx_ok(id):
+					sounds.append(id)
 			PAL:
 				var a := _popn(st, 2)
 				pal[a[0] & 3] = a[1] & 0xFFFF

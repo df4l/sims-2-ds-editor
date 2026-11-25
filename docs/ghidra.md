@@ -306,3 +306,11 @@ Scene model loading (2026-11-20, own scenes, docs/formats/bmd0.md):
 | 0x020bbcf0 | Gfx_UploadModelTexPalette | (model, pal, src, size, offset, immediate): palette over a model palette in VRAM | confirmed |
 | 0x0209bac8 / 0x0209ba2c | Arc0_DrawSprite16x8 / Arc0_DrawGlyph8x5 | 1bpp sprite / digit OR'ed into the 128×128 2bpp screen | confirmed |
 | 0x0211E200 (data) | ArcN_<Game>_Init/Update/Free | 10 × {Init, Update, Free}, all 30 functions named (types 0..9) | confirmed |
+| 0x020d5680 | Snd_PlaySoundEvent | (id 0..671, fx32 position) → handle; table 0x02136CB8 {s16 count, u16 first} → random variant in 0x02137738 {u16 sound, u16 param} | confirmed (code; arcade ids played in melonDS, not heard) |
+| 0x020d5604 | Snd_StopSoundHandle | stops a handle (cabinet ambience +0x9C in Arc_ControllerDtor) | assumed |
+| 0x0209bd04 / 0x0209c18c / 0x0209bb64 | Arc0_UpdateInvaders / Arc0_UpdatePlayerShot / Arc0_UpdateEnemyShots | Space Armada parts (sfx 0x2A 0x2B / 0x2C / 0x1F) | confirmed (code) |
+| 0x0209ea48 / 0x0209ed6c | Arc3_UpdateBall / Arc3_MovePaddle | Bustin' Out (sfx 0x1F 0x20 0x2A 0x28 / 0x21) | confirmed (code) |
+| 0x020a2e2c | Arc6_UpdatePies | Pie Factory (sfx 0x26 0x24 0x25) | confirmed (code) |
+| 0x020b55b0 / 0x020b5cf0 | Arc4_UpdateCopter / Arc4_ResetCopter | Copter (sfx 0x23 0x21 0x1F / 0x20) | partial |
+| 0x020b7364 / 0x020b7d0c | Arc2_UpdateShots / Arc2_UpdatePlayer | X-Raider (sfx 0x28 / 0x27) | partial |
+| 0x020af100 | Arc7_UpdateBalls | Billiards ball contact (sfx 0x264) | partial |

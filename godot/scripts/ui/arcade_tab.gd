@@ -52,7 +52,7 @@ COMMANDS
   text "...", x, y, c [, size]    3×5 font, \\n = new line
   num v, x, y, c [, size]         number in decimal
   pal i, #RRGGBB                  change a palette entry
-  sfx id                          play a game sound
+  sfx id                          play a game sound (ids below)
 
 EXPRESSIONS (low to high)
   or  and  not  | ^ &  == != < <= > >=  << >>  + -  * / %  unary - ~
@@ -65,6 +65,18 @@ FUNCTIONS
 BUILT-INS
   attract (1 on the attract screen), tick (frames since init)
   keys: A B SELECT START RIGHT LEFT UP DOWN R L X Y
+
+SOUNDS (sfx; names = where the original cabinets use them)
+  SFX_BOUNCE 0x1F  ball on a wall, player hit, crash
+  SFX_LOST   0x20  ball lost / restart      SFX_BLIP    0x21  paddle edge, pickup
+  SFX_COPTER 0x23  Copter delivery          SFX_CATCH   0x24  pie caught
+  SFX_MISS   0x25  pie missed               SFX_LAUNCH  0x26  new pie
+  SFX_LASER  0x27  X-Raider shot            SFX_BREAK   0x28  brick / target hit
+  SFX_PADDLE 0x2A  paddle hit, march step   SFX_ENEMY_SHOT 0x2B  invader shot
+  SFX_EXPLODE 0x2C invader destroyed        SFX_SHOOT   0x2D  player shot
+  SFX_EXTRA1 0x2F, SFX_EXTRA2 0x30  arcade sounds no cabinet uses
+  SFX_COIN 0x15C  insert coin               SFX_CLACK  0x264  billiard ball
+  Any id 0..671 works except the looping ambiences 0x22 0x29 0x2E (ignored).
 
 IN THE GAME
   A presses Stop in the Sims UI: the session ends. Use B, X, Y and the D-pad.
@@ -285,6 +297,8 @@ func _highlighter() -> CodeHighlighter:
 	for k in ArcadeScript.FUNCS:
 		h.add_keyword_color(k, Color("#4fc3f7"))
 	for k in ArcadeVM.KEYS:
+		h.add_keyword_color(k, Color("#f06292"))
+	for k in ArcadeVM.SOUNDS:
 		h.add_keyword_color(k, Color("#f06292"))
 	for k in ["attract", "tick", "true", "false"]:
 		h.add_keyword_color(k, Color("#f06292"))
@@ -538,8 +552,15 @@ func step(keys := -1) -> void:
 
 func _after_call() -> void:
 	if not vm.sounds.is_empty():
-		_sfx_msg = "sfx " + ", ".join(vm.sounds.map(func(s): return "0x%X" % s))
+		_sfx_msg = "sfx " + ", ".join(vm.sounds.map(func(s): return _sound_name(s)))
 		_sfx_until = Time.get_ticks_msec() + 1000
+
+
+static func _sound_name(id: int) -> String:
+	for k in ArcadeVM.SOUNDS:
+		if ArcadeVM.SOUNDS[k] == id:
+			return k
+	return "0x%X" % id
 
 
 func _upload() -> void:

@@ -109,9 +109,10 @@ func fly
     if x / 16 >= padx - 2 and x / 16 + 16 <= padx + 22 and vy < 24 and abs(vx) < 8
       state = 1
       best = max(best, fuel)
-      sfx 0x15C
+      sfx SFX_CATCH
     else
       state = 2
+      sfx SFX_EXPLODE
     end
   end
 end

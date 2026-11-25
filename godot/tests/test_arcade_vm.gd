@@ -108,6 +108,10 @@ func _init() -> void:
 	check(vm.pal[1] == 31 and vm.pal[2] == 31 << 10 and vm.pal[3] == 3 and vm.sounds == [0x15C], "palette, pal, sfx")
 	vm.start(false)
 	check(vm.pal[2] == 2, "init restores the palette")
+	vm = run("var i\nfunc frame\nsfx SFX_SHOOT\nsfx SFX_COIN + 0\ni = 0x22\nsfx i\nsfx i + 650\nsfx -i\nsfx 671\nend\n")
+	check(vm.sounds == [0x2D, 0x15C, 671], "sfx names; loops / out of range ignored at run time (%s)" % [vm.sounds])
+	for k in ArcadeVM.SOUNDS:
+		check(ArcadeVM.sfx_ok(ArcadeVM.SOUNDS[k]), "sound name %s usable" % k)
 	check(val("pix 5, 6, 2\nr = peek(5, 6) * 10 + peek(-1, 0)") == 20, "peek")
 
 	# --- errors -------------------------------------------------------------------------------------------------------
@@ -116,7 +120,9 @@ func _init() -> void:
 		"func frame\nbreak\nend\n": "outside a loop", "sprite s\n4\nend\nfunc frame\nend\n": "bad pixel",
 		"func frame\ntext \"x\", 1\nend\n": "text \"...\"", "func frame\nrect 1, 2\nend\n": "rect takes 5",
 		"var big[300]\nfunc frame\nend\n": "array size", "var r\nfunc frame\nr = (1 +\nend\n": "expected a value",
-		"var a\nfunc frame\nа = 1\nend\n": "bad character", "func frame\ncls 0\n": "no end"}
+		"var a\nfunc frame\nа = 1\nend\n": "bad character", "func frame\ncls 0\n": "no end",
+		"func frame\nsfx 0x29\nend\n": "looping cabinet sound", "func frame\nsfx 672\nend\n": "sound ids 0..671",
+		"func frame\nsfx -1\nend\n": "sound ids 0..671"}
 	for src in bad:
 		var r := ArcadeScript.compile(src)
 		check(r.has("error") and r.error.contains(bad[src]), "error '%s' -> %s (line %d)" % [bad[src], r.get("error", "none"), r.get("line", 0)])

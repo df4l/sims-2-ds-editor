@@ -406,6 +406,12 @@ num_pos:
 	b vm_next
 op_sfx:                     ; id
 	ldr r0, [r6, #-4]!
+	cmp r0, #0x2A0              ; past the game's sound table (672 ids): ignored
+	bhs vm_next
+	cmp r0, #0x22               ; the 3 looping cabinet ambiences: ignored
+	cmpne r0, #0x29
+	cmpne r0, #0x2E
+	beq vm_next
 	ldr r1, [r4, #0x20]
 	add r1, r1, #0x78
 	bl PLAY_SFX

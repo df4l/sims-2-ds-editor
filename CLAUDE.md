@@ -114,7 +114,11 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations, own 3D scenes)
-- 2026-11-24 (latest): Arcade tab DONE (godot/scripts/ui/arcade_tab.gd): cabinet choice, source editor, live preview
+- 2026-11-25 (latest): arcade sounds DONE: `sfx` ids of the original cabinets decoded (Snd_PlaySoundEvent
+  0x020D5680, block 0x1F..0x30, docs/formats/arcade_vm.md §2b), built-in names SFX_… in the language, looping /
+  out-of-table ids refused by the compiler and ignored by both VMs. CONFIRMED in melonDS (build/arcade_test/sfx/, run
+  without crash; not heard). Next: from the backlog (Blender round-trip, Sims / characters…).
+- 2026-11-24: Arcade tab DONE (godot/scripts/ui/arcade_tab.gd): cabinet choice, source editor, live preview
   (ArcadeVM + shader), palette / 16×8 sprite editors rewriting the source, examples, Apply / Remove, "Placed in" +
   "Selected prop → cabinet". Test: test_arcade_ui (31/31, window). Next: try it by hand (keyboard play), then pick
   from the backlog (sfx id list for `sfx`, Blender round-trip, Sims / characters…).
