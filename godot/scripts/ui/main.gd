@@ -60,6 +60,7 @@ var view3d: SubViewportContainer
 var tree: Tree
 var tabs: TabContainer
 var arcade: ArcadeTab
+var sims: SimsTab
 var main_split: HSplitContainer
 var side_tree: Control
 var _split_saved = null      # split offset before the Arcade tab widened the side panel
@@ -313,6 +314,7 @@ func open_rom(path: String) -> void:
 	get_window().title = "Sims 2 DS Map Editor — %s" % path.get_file()
 	_fill_loc_opt()
 	arcade.reset()
+	sims.reset()
 	open_location(5)
 	if gd.warning != "":
 		show_msg(gd.warning, "Unexpected ROM version")
@@ -466,6 +468,9 @@ func _build_editor() -> void:
 	arcade = ArcadeTab.new()
 	arcade.ed = self
 	tabs.add_child(arcade)
+	sims = SimsTab.new()
+	sims.ed = self
+	tabs.add_child(sims)
 	tabs.tab_changed.connect(_on_tab_changed)
 
 	var bottom := MarginContainer.new()
@@ -1081,7 +1086,7 @@ func _dlg_add_new_string_line() -> void:
 
 ## The Arcade tab needs room: it hides the item list and widens the side panel while it is shown.
 func _on_tab_changed(i: int) -> void:
-	var on := tabs.get_tab_control(i) == arcade
+	var on := tabs.get_tab_control(i) == arcade or tabs.get_tab_control(i) == sims
 	side_tree.visible = not on
 	if on and _split_saved == null:
 		_split_saved = main_split.split_offset
@@ -1091,6 +1096,7 @@ func _on_tab_changed(i: int) -> void:
 		_split_saved = null
 	if on:
 		arcade.refresh()
+		sims.refresh()
 
 
 func _scroll_tab(title: String) -> VBoxContainer:
@@ -1243,6 +1249,7 @@ func _rebuild_view(refit: bool) -> void:
 	_refresh_dialogue()
 	_render_locations()
 	arcade.refresh()
+	sims.refresh()
 	if _find(sel) == null:
 		sel = ""
 	if mode == "items":

@@ -23,6 +23,10 @@ var error := ""
 var textures := {}    # name -> {params, data1, data2}
 var palettes := {}    # name -> {off, block}
 var model := {}       # first model of MDL0
+var tex_names := []   # texture names in TEX0 order (= texture slot of Gfx_UploadModelTexImage)
+var pal_names := []   # palette names in TEX0 order
+var pal_block := PackedByteArray()   # the whole TEX0 palette block (every palette points into it)
+var hidden_nodes := {}  # node index -> true: pieces drawn under that node are skipped (NODE command 0x02)
 
 
 static func fix(x: int, sign_bits: int, int_bits: int, frac_bits: int) -> float:
@@ -86,7 +90,7 @@ func _read_tex(at: int) -> void:
 	var pal_len := _u16(at + 48) << 3
 	var palette_off := _u32(at + 52)
 	var pal_block_off := _u32(at + 56)
-	var pal_block := buf.slice(at + pal_block_off, at + pal_block_off + pal_len)
+	pal_block = buf.slice(at + pal_block_off, at + pal_block_off + pal_len)
 	for e in _info(at + texture_off, 8):
 		var params := _u32(e[0])
 		var off := (params & 0xFFFF) << 3
@@ -103,8 +107,23 @@ func _read_tex(at: int) -> void:
 			t.data1 = buf.slice(at + tex_block + off, at + tex_block + off + ln)
 			t.data2 = PackedByteArray()
 		textures[e[1]] = t
+		tex_names.append(e[1])
 	for e in _info(at + palette_off, 4):
 		palettes[e[1]] = {"off": _u16(e[0]) << 3, "block": pal_block}
+		pal_names.append(e[1])
+
+
+## Replace the texels of texture `slot` (TEX0 order), like Gfx_UploadModelTexImage 0x020bbde8.
+func set_texels(slot: int, data: PackedByteArray) -> void:
+	if slot < tex_names.size():
+		textures[tex_names[slot]].data1 = data
+
+
+## Replace the palette block of every palette (same size), like Gfx_UploadModelTexPalette 0x020bbcf0 does in VRAM.
+func set_pal_block(block: PackedByteArray) -> void:
+	pal_block = block
+	for n in palettes:
+		palettes[n].block = block
 
 
 func _read_model(at: int, name: String) -> Dictionary:
@@ -273,8 +292,10 @@ func _parse_render(at: int) -> Array:
 			params = buf.slice(p, p + _RENDER_PARAMS[op])
 			p += _RENDER_PARAMS[op]
 		match op:
-			0x00, 0x02:
+			0x00:
 				pass
+			0x02:
+				ops.append(["node", params[0]])
 			0x01:
 				return ops
 			0x03:
@@ -340,6 +361,7 @@ func build(variant := PackedByteArray()) -> MeshInstance3D:
 		stack.append(_ident())
 	var cur := _ident()
 	var cur_mat := 0
+	var cur_node := -1
 	# per material: positions, colors, uvs, indices
 	var surf := {}
 	var uvmaps := []
@@ -369,8 +391,10 @@ func build(variant := PackedByteArray()) -> MeshInstance3D:
 				cur = _scale(cur, model.down_scale, model.down_scale, model.down_scale)
 			"mat":
 				cur_mat = op[1]
+			"node":
+				cur_node = op[1]
 			"draw":
-				if op[1] < model.pieces.size():
+				if op[1] < model.pieces.size() and not hidden_nodes.has(cur_node):
 					if not surf.has(cur_mat):
 						surf[cur_mat] = {"v": PackedVector3Array(), "c": PackedColorArray(), "uv": PackedVector2Array(),
 							"i": PackedInt32Array()}

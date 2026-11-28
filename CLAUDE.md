@@ -114,7 +114,14 @@ Code-driven approach:
 > Update this section at the end of every session.
 
 - Current phase: 5 (editor; modding features: text, scripts, dialogue, new locations, own 3D scenes)
-- 2026-11-25 (latest): arcade sounds DONE: `sfx` ids of the original cabinets decoded (Snd_PlaySoundEvent
+- 2026-11-25 (latest): Sims / characters started, RE pass 1 (docs/formats/sim.md). Character model table 0x02118310
+  (BMD0 + anim list per NPC id); player Sim = FemSim / MalSim with hair / torso / legs nodes toggled, 4 × 64×64 8bpp
+  textures, 2 palettes split in colour ranges; appearance record G+0x47AC (Sim_ApplyAppearance 0x0200eb18). Record
+  edit + warp CONFIRMED in melonDS (build/sim_test/). Sims tab DONE (user choice "Aperçu + look de départ"):
+  SimLook + scripts/ui/sims_tab.gd, 3D preview + starting look (rewrite of Sim_InitDefaultAppearance, edit kind
+  `sim:57/58`), direct boot CONFIRMED in melonDS; colour 0 = hair CONFIRMED. Tests: test_sim, test_sims_ui. Next ideas:
+  new clothes in Create-a-Sim (read the overlay 3 list structure), NPC model swap, BCA0 animations.
+- 2026-11-25: arcade sounds DONE: `sfx` ids of the original cabinets decoded (Snd_PlaySoundEvent
   0x020D5680, block 0x1F..0x30, docs/formats/arcade_vm.md §2b), built-in names SFX_… in the language, looping /
   out-of-table ids refused by the compiler and ignored by both VMs. CONFIRMED in melonDS (build/arcade_test/sfx/, run
   without crash; not heard). Next: from the backlog (Blender round-trip, Sims / characters…).

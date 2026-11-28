@@ -45,6 +45,9 @@ The Godot binaries are not committed (see `.gitignore`).
      editors that rewrite the text, examples, Apply (Ctrl+S) / Remove. "Placed in" lists where the cabinet stands;
      "Selected prop → cabinet" turns the prop selected in the view (e.g. a Space Armada cabinet) into it. In the
      game, A presses Stop in the Sims UI: games use B, X, Y and the D-pad.
+   - **Sims** tab: the player Sim's starting look (female / male), with a 3D preview built like in game: hair,
+     torso and legs style, head / torso / legs texture (the Create-a-Sim ones), hair colour, skin and clothes
+     colours. A new game (and Test ▶) starts with it; Create-a-Sim starts from it (docs/formats/sim.md).
    - **Own 3D scene** of a new location (Locations tab, "Import .glb / .gltf…"): the glTF scene replaces the
      template's scene models and collision. In Blender: model the place (Y up after export, 1 m = 7 game units
      with the default scale 7; a Sim is about 12.5 units), texture it with the Base Color image of each material
@@ -115,6 +118,8 @@ godot --headless --path . --script res://tests/test_armasm.gd -- out_dir   # ass
 godot --headless --path . --script res://tests/test_arcade.gd -- sims2.nds out_dir   # own arcade game install + test-card ROM (location 24)
 godot --path . --script res://tests/test_dialogue_ui.gd -- sims2.nds   # Dialogue tab smoke test (needs a window)
 godot --path . --script res://tests/test_arcade_ui.gd -- sims2.nds   # Arcade tab smoke test (needs a window)
+godot --headless --path . --script res://tests/test_sim.gd -- sims2.nds out_dir   # Sim appearance: defaults, preview, starting-look install
+godot --path . --script res://tests/test_sims_ui.gd -- sims2.nds [out_dir]   # Sims tab smoke test (needs a window)
 godot --path . --script res://tests/test_locations_ui.gd -- sims2.nds [out_dir/test_room.glb]   # Locations tab (+ scene import)
 godot --path . -- sims2.nds --shot=out.png [--loc=N] [--3d] [--sel=b/g/i] [--tab=N] [--cells] [--text=query] [--dlg=id[,1=messages]] [--arcade=example]   # UI screenshot
 ```

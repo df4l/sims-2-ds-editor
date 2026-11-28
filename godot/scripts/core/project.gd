@@ -13,7 +13,7 @@ extends RefCounted
 ## from another block might mean this item (ambiguous).
 ## Every mutating function returns "" on success or the reason it was refused (nothing changed then).
 
-const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg", "newloc", "model", "arcade"]
+const KINDS := ["layout", "bsp", "furniture", "text", "conv", "msg", "newloc", "model", "arcade", "sim"]
 const UNDO_MAX := 100
 
 var gd: GameData
@@ -68,6 +68,7 @@ func original(kind: String, entry: int) -> PackedByteArray:
 		"newloc": return "[]".to_utf8_buffer()
 		"model": return PackedByteArray()   # own scene model of a new location (SCENE + id): none
 		"arcade": return PackedByteArray()  # own arcade game on cabinet `entry` (ArcadeExt.FREE_PROPS): none
+		"sim": return SimLook.rom_default(gd, entry)   # starting look of model 57 / 58 (docs/formats/sim.md)
 		"layout", "text":
 			if entry >= VIRT:
 				return gd.rombin.raw_entry(gd.locations[_virt_src(entry)].nav)
@@ -1372,7 +1373,26 @@ func arm9_mod() -> Arm9Mod:
 		m.error = LocExt.install(m, ovl_patches, _install_list())
 	if m.error == "" and not arcade_games().is_empty():
 		m.error = ArcadeExt.install(m, arcade_games())
+	if m.error == "" and (is_edited("sim", SimLook.FEMALE) or is_edited("sim", SimLook.MALE)):
+		m.error = SimLook.install(m, current("sim", SimLook.FEMALE), current("sim", SimLook.MALE))
 	return m
+
+
+# --- starting look of the player Sim (SimLook, docs/formats/sim.md) ---------------------------------------------------
+
+## Record (SimLook.SIZE bytes) a new game starts with for model SimLook.FEMALE / MALE.
+func sim_look(model: int) -> PackedByteArray:
+	return current("sim", model)
+
+
+func set_sim_look(model: int, r: PackedByteArray) -> String:
+	if model != SimLook.FEMALE and model != SimLook.MALE:
+		return "model %d is not a player Sim" % model
+	var e := SimLook.check(r)
+	if e != "":
+		return e
+	_store("sim", model, r)
+	return ""
 
 
 # --- own arcade games (ArcadeExt, docs/formats/arcade.md) ------------------------------------------------------------
@@ -1515,7 +1535,8 @@ func has_furniture_edits() -> bool:
 
 func has_arm9_edits() -> bool:
 	for k in edits:
-		if k.begins_with("furniture:") or k.begins_with("conv:") or k.begins_with("msg:") or k.begins_with("arcade:"):
+		if k.begins_with("furniture:") or k.begins_with("conv:") or k.begins_with("msg:") or k.begins_with("arcade:") \
+				or k.begins_with("sim:"):
 			return true
 	return not newlocs().is_empty()
 

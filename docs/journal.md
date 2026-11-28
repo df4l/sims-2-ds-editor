@@ -1273,3 +1273,29 @@ the same VM in GDScript for the preview (docs/formats/arcade_vm.md).
 - **Tests**: test_arcade_vm (+ sfx names / ignored ids / 3 errors), test_arcade, test_arcade_ui: 0 failures.
 - **Emulator** (build/arcade_test/sfx/arcade_sfx.nds): all 17 names played in order, ~2 200 ignored calls, no crash.
   CONFIRMED as execution. Not heard: MelonMCP has no audio capture.
+
+## 2026-11-25 — Sims / characters: player Sim appearance (docs/formats/sim.md)
+
+- **Hypothesis**: the 131 `img8_nopal` textures are Sim parts, their palette chosen at run time.
+- **Code**: `Actor_InitNpc` → model table 0x02118310 (BMD0 + anim list of {id, BCA0, trs}); callers of
+  Gfx_UploadModelTexPalette / Gfx_UploadModelTexImage lead to `Sim_ApplyAppearance` 0x0200eb18 and its helpers
+  (renamed). FemSim / MalSim = one model with 8 hair, 4 legs, 3 torso nodes toggled on/off, 4 × 64×64 8bpp textures,
+  2 × 256-colour palettes split in ranges (skin, colour 0, 3..8). Appearance record G+0x47AC (0x21 bytes).
+  Create-a-Sim (overlay 3) only calls the setters through wrappers; its option lists sit near 0x0214F884.
+- **Emulator** (loc5_control_unlocked): record = female defaults, model 57. Edited the record (hair 5, torso 15,
+  legs 12, torso tex 3326, colour 3 = 3, skin 2) + warp 5 → 5: new actor carries the values, hairdo and outfit change
+  (build/sim_test/record_edit_after.png). CONFIRMED.
+- **Open**: CAS list structure, colour meanings, outfit mode, BCA0.
+
+## 2026-11-25 — Sims tab: starting look of the player Sim
+
+- **Editor**: SimLook (core) + Sims tab: preview built like Sim_ApplyAppearance, changes saved per edit, exported as
+  a rewrite of Sim_InitDefaultAppearance (copy of a record table; checked with capstone). Nsbmd now honours the SBC
+  NODE command (hidden nodes) and exposes texture slots / the palette block.
+- **Tests**: test_sim (45 checks, incl. female default = RAM record byte for byte, export + reopen reads the looks
+  back), test_sims_ui (15 checks, PNG renders in build/sim_test/).
+- **Emulator**: direct-boot ROM with an edited look → the Sim starts with it (actor +0x220 = table). A/B: colour 0
+  set to 4 in the record + warp → grey hair: colour 0 = hair colour, CONFIRMED. Female default hair (value 0) is
+  orange; it looked blond in the night scene only.
+- **Emulator**: normal-boot export (sim_look_cas.nds) → Create-a-Sim opens on the edited look, identical to the
+  editor preview (build/sim_test/cas_starts_with_look.png). CONFIRMED.

@@ -314,3 +314,21 @@ Scene model loading (2026-11-20, own scenes, docs/formats/bmd0.md):
 | 0x020b55b0 / 0x020b5cf0 | Arc4_UpdateCopter / Arc4_ResetCopter | Copter (sfx 0x23 0x21 0x1F / 0x20) | partial |
 | 0x020b7364 / 0x020b7d0c | Arc2_UpdateShots / Arc2_UpdatePlayer | X-Raider (sfx 0x28 / 0x27) | partial |
 | 0x020af100 | Arc7_UpdateBalls | Billiards ball contact (sfx 0x264) | partial |
+
+## Player Sim appearance (2026-11-25, docs/formats/sim.md)
+
+| Address | Name | Role | Status |
+|---|---|---|---|
+| 0x020879c8 | Map_SpawnPlayerSim | allocates the Sim (0x244), model id G+0x47D0; G+0 bit 0 → Sim_SetAppearanceFromRecord(G+0x47AC) else Sim_ApplyAppearance | confirmed (code + emulator) |
+| 0x0200fbbc | Actor_InitPlayerSim | Sim ctor (model id): Sim_InitDefaultAppearance(id, actor+0x220) | confirmed (code) |
+| 0x0200dfd0 | Sim_InitDefaultAppearance | default record per sex (57 female / else male) | confirmed (code + RAM) |
+| 0x0200ea74 | Sim_SetAppearanceFromRecord | record (0x21 bytes) → actor +0x220..+0x240, then Sim_ApplyAppearance | confirmed (code + emulator) |
+| 0x0200eb18 | Sim_ApplyAppearance | node visibility (hair / torso / legs / head), hair texture by style, 3 textures, all colour ranges | confirmed (code + emulator) |
+| 0x0200dc20 | Sim_UploadPartPalette | (sim, part 0..8, palette file): value / divisor → palette range of pal A / B | confirmed (code) |
+| 0x0200e3ac / 0x0200e33c / 0x0200e2cc | Sim_SetHeadTexture / Sim_SetTorsoTexture / Sim_SetLegsTexture | tex slot 1 / 3 / 2 from a rom.bin entry | confirmed (code) |
+| 0x0200ea28 / 0x0200e9d0 / 0x0200e950 | Sim_SetColor0 / Sim_SetSkinToneA / Sim_SetSkinToneB | colour setters (called from overlay 3 wrappers) | confirmed (code) |
+| 0x0200e878 / 0x0200e7ac / 0x0200e440 | Sim_SetColor3 / Sim_SetColor4 / Sim_SetColor8 | colour setters | confirmed (code) |
+| 0x0200f6b4 | Sim_ApplyOutfitFemale | outfit mode (+0x240) for model 0x39 | partial |
+
+Data: 0x02118310 character model table (63 × {anim list, BMD0, count}); 0x0212FBB8 node bases {1, 14, 10, 9};
+0x0212FBE8 / 0x0212FC08 hair textures (female / male); 0x0212FBC4 / 0x0212FBBC palette files of colours 3–8 / 5.
